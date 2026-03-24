@@ -1,0 +1,103 @@
+export type RiskLevel = 'green' | 'amber' | 'red';
+
+export interface CaseSignalsRaw {
+  case_id: number;
+  company_id: number;
+  alias: string;
+  case_created_at: string;
+  total_amount: number;
+  max_transaction_amount: number;
+  merchants: string;
+  account_age_days: number;
+  account_status: string;
+  cifas_count: number;
+  tier_name: string | null;
+  is_money_maker: boolean;
+  trust_score: string | null;
+  scammer_count: number;
+  scam_victim_count: number;
+  tx_count_90_days: number;
+  active_months: number;
+  prior_payments_to_merchant: number;
+  railsr_disputes_last_6_months: number;
+  railsr_disputes_last_30_days: number;
+}
+
+export interface HardGateSignals {
+  cifas: boolean;
+  railsr_dispute_last_6_months: boolean;
+  confirmed_scammer: boolean;
+  account_not_active: boolean;
+}
+
+export interface DisputeProfile {
+  case_id: number;
+  alias: string;
+  company_id: number;
+  risk_level: RiskLevel;
+  total_amount: number;
+  max_transaction_amount: number;
+  merchants: string;
+  account_age_days: number;
+  account_status: string;
+  tier_name: string | null;
+  is_money_maker: boolean;
+  trust_score: string | null;
+  rubric_score: number;
+  category_scores: {
+    account_trust: number;
+    dispute_history: number;
+    transaction_risk: number;
+  };
+  risk_factors: string[];
+}
+
+export interface PlannerArgs {
+  is_dispute: false;
+  is_fraud: boolean;
+  credit_mode: 'IMMEDIATELY';
+  reason: string;
+  fraud_type?: string;
+  fraud_sub_type?: string;
+  crime_reference?: string;
+}
+
+export interface PlannerOutput {
+  thought: string;
+  decision: 'credit' | 'escalate_to_agent';
+  credit_timing: 'immediately' | 'none';
+  args?: PlannerArgs;
+  uncertainty_factors: string[];
+}
+
+export interface PipelineRunRow {
+  id: number;
+  case_id: number;
+  raw_signals: CaseSignalsRaw;
+  case_details: unknown | null;
+  dispute_profile: DisputeProfile;
+  hard_gates: HardGateSignals;
+  hard_gate_triggered: string | null;
+  planner_output: PlannerOutput | null;
+  executor_action: string;
+  pipeline_duration_ms: number;
+  prompt_version: string | null;
+  evidence_artifacts: unknown | null;
+  reviewer_verdict: string | null;
+  reviewer_notes: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface PipelineRunInsert {
+  case_id: number;
+  raw_signals: CaseSignalsRaw;
+  case_details: unknown | null;
+  dispute_profile: DisputeProfile;
+  hard_gates: HardGateSignals;
+  hard_gate_triggered: string | null;
+  planner_output: PlannerOutput | null;
+  executor_action: string;
+  pipeline_duration_ms: number;
+  prompt_version: string | null;
+}
