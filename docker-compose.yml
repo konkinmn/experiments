@@ -13,3 +13,5 @@ services:
 
 volumes:
   pgdata:
+    external: true
+    name: anna-ws-analytics_pgdata
