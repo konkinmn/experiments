@@ -61,11 +61,11 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 6: Fix risk level derivation — replace old OR logic with rubric score
-- [ ] In `dispute-pipeline.ts`, verify `deriveRiskLevel` uses rubric score thresholds: Green ≥ 70, Amber 40–69, Red < 40 or any hard gate
-- [ ] If it still uses the old logic (account age < 180d OR trust AMBER OR tier B OR scam victim > 0), replace it with the rubric score approach
-- [ ] Ensure `rubric_score` is exposed on the `DisputeProfile` type and included in what is saved to DB and returned to frontend
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] In `dispute-pipeline.ts`, verify `deriveRiskLevel` uses rubric score thresholds: Green ≥ 70, Amber 40–69, Red < 40 or any hard gate
+- [x] If it still uses the old logic (account age < 180d OR trust AMBER OR tier B OR scam victim > 0), replace it with the rubric score approach
+- [x] Ensure `rubric_score` is exposed on the `DisputeProfile` type and included in what is saved to DB and returned to frontend
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 7: Verify hard gate priority order
 - [ ] In `dispute-pipeline.ts`, verify `checkHardGates` uses explicit ordered checks (not `Object.entries` iteration):
