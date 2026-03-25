@@ -222,8 +222,9 @@ async function callPlanner(
   // Fetch artifact files in parallel
   const artifactResults = await Promise.allSettled(
     filteredArtifacts.map(async (a) => {
-      const artifact = a as { id: string; artifact_type: string };
-      const file = await fetchArtifactAsBase64(String(artifact.id));
+      const artifact = a as { id: number; artifact_id: string; artifact_type: string };
+      const fileId = artifact.artifact_id ?? String(artifact.id);
+      const file = await fetchArtifactAsBase64(fileId);
       return { artifact, file };
     }),
   );

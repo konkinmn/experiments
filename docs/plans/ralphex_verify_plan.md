@@ -89,13 +89,13 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 9: Final integration test with case 29452
-- [ ] Run the pipeline against case 29452 and verify:
+- [x] Run the pipeline against case 29452 and verify:
   - BQ signals fetch returns correct data including `tx_count_90_days > 0`
   - `DISPUTE_FORM` artifact is fetched and base64-encoded without error
   - Planner receives the form content and references it in `thought`
   - Planner `thought` does not mention Tier C as a risk factor
   - Dispute profile shows Green risk with score ≥ 70
   - Result saves to DB with all fields populated
-- [ ] If any step fails, fix it before marking complete
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] If any step fails, fix it before marking complete
+- [x] Run validation commands
+- [x] Mark completed
