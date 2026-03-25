@@ -140,9 +140,7 @@ function checkHardGates(gates: HardGateSignals): string | null {
 
 const ALLOWED_ARTIFACT_TYPES = new Set([
   'DISPUTE_FORM',
-  'FORM',
-  'EVIDENCE',
-  'DOCUMENT',
+  'FILE',
 ]);
 
 function filterCaseArtifacts(artifacts: unknown[]): unknown[] {
@@ -212,7 +210,7 @@ function parseJson(raw: string): unknown {
 async function callPlanner(
   profile: DisputeProfile,
   rawSignals: CaseSignalsRaw,
-  caseDetails: { summary: string; artifacts: unknown[] } | null,
+  caseDetails: { artifacts: unknown[] } | null,
 ): Promise<{ output: PlannerOutput; rawResponse: string }> {
   const prompt = await getPromptById(PROMPT_ID);
   if (!prompt) {
@@ -278,7 +276,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       const result = await callPlanner(
         profile,
         rawSignals,
-        caseDetails ? { summary: caseDetails.summary, artifacts: caseDetails.artifacts as unknown[] } : null,
+        caseDetails ? { artifacts: caseDetails.artifacts as unknown[] } : null,
       );
       plannerOutput = result.output;
     } catch (err) {

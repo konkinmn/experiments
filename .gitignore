@@ -13,3 +13,6 @@ pnpm-debug.log*
 .env
 .env.*
 packages/backend/.env
+
+# ralphex progress logs
+progress*.txt

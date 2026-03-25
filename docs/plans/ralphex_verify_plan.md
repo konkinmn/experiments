@@ -25,11 +25,11 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 2: Fix artifact type restriction and case detail stripping
-- [ ] In `dispute-pipeline.ts`, update `ALLOWED_ARTIFACT_TYPES` to contain only `DISPUTE_FORM` and `FILE` — remove `FORM`, `EVIDENCE`, `DOCUMENT`
-- [ ] In `dispute-pipeline.ts`, ensure case details passed to the Planner strip all resolution history: remove `status`, `outcome`, `summary`, agent comments, and any timeline events after form submission — only `id`, `ref_id`, `alias`, `issue_type_id`, and filtered artifacts should pass through
-- [ ] Verify the same stripping applies to what is saved in `case_details` column in DB (no outcome data persisted either)
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] In `dispute-pipeline.ts`, update `ALLOWED_ARTIFACT_TYPES` to contain only `DISPUTE_FORM` and `FILE` — remove `FORM`, `EVIDENCE`, `DOCUMENT`
+- [x] In `dispute-pipeline.ts`, ensure case details passed to the Planner strip all resolution history: remove `status`, `outcome`, `summary`, agent comments, and any timeline events after form submission — only `id`, `ref_id`, `alias`, `issue_type_id`, and filtered artifacts should pass through
+- [x] Verify the same stripping applies to what is saved in `case_details` column in DB (no outcome data persisted either)
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 3: Implement file fetch pipeline for artifacts
 - [ ] Add `FILE_SHARE_BASE_URL` and `MEDIA_BASE_URL` to environment config (with defaults: `https://file-share-ag.k1.anna.money` and `https://media.k1.anna.money`)
