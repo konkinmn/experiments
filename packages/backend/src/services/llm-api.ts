@@ -1,6 +1,28 @@
+export interface TextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface FileContent {
+  type: 'file';
+  file: {
+    filename: string;
+    file_data: string;
+  };
+}
+
+export interface ImageUrlContent {
+  type: 'image_url';
+  image_url: {
+    url: string;
+  };
+}
+
+export type ContentPart = TextContent | FileContent | ImageUrlContent;
+
 export interface Message {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface LLMResponse {

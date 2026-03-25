@@ -42,14 +42,14 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 4: Pass artifacts to Planner as multimodal content
-- [ ] In `dispute-pipeline.ts`, after filtering artifacts to `DISPUTE_FORM` and `FILE`, call `fetchArtifactAsBase64` for each artifact in parallel using `Promise.allSettled`
-- [ ] Build the Planner user message as a content array (not a plain string):
+- [x] In `dispute-pipeline.ts`, after filtering artifacts to `DISPUTE_FORM` and `FILE`, call `fetchArtifactAsBase64` for each artifact in parallel using `Promise.allSettled`
+- [x] Build the Planner user message as a content array (not a plain string):
   - For each `DISPUTE_FORM` artifact with successful fetch: add `{ type: "file", file: { filename, file_data: "data:application/pdf;base64,{base64}" } }`
   - For each `FILE` artifact with successful fetch: add `{ type: "image_url", image_url: { url: "data:{mimeType};base64,{base64}" } }`
   - Append the existing JSON signals object as `{ type: "text", text: JSON.stringify({dispute_profile, raw_signals, case_details}, null, 2) }`
-- [ ] Verify `analyzeWithLLM` in `llm-api.ts` accepts content arrays in the user message — update if it only accepts strings
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Verify `analyzeWithLLM` in `llm-api.ts` accepts content arrays in the user message — update if it only accepts strings
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 5: Fix Planner prompt — tier eligibility and missing constraints
 - [ ] In `dispute-planner-v1.md`, add explicit constraint: "Tier C, D, and E are all eligible customers. Only Tier B indicates an unestablished account. Do not treat Tier C as elevated risk."

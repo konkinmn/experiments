@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { fetchCaseSignals } from './signals-query.js';
-import { fetchCaseDetails } from './case-api.js';
+import { fetchCaseDetails, fetchArtifactAsBase64 } from './case-api.js';
 import { analyzeWithLLM } from './llm-api.js';
+import type { ContentPart } from './llm-api.js';
 import { getPromptById } from './prompts.js';
 import { insertPipelineRun } from './db.js';
 import type {
@@ -217,25 +218,71 @@ async function callPlanner(
     throw new Error(`Prompt ${PROMPT_ID} not found`);
   }
 
-  const userMessage = JSON.stringify({
-    dispute_profile: profile,
-    raw_signals: {
-      case_created_at: rawSignals.case_created_at,
-      tx_count_90_days: rawSignals.tx_count_90_days,
-      active_months: rawSignals.active_months,
-      prior_payments_to_merchant: rawSignals.prior_payments_to_merchant,
-      railsr_disputes_last_30_days: rawSignals.railsr_disputes_last_30_days,
-    },
-    case_details: caseDetails
-      ? {
-          artifacts: filterCaseArtifacts(caseDetails.artifacts),
-        }
-      : null,
-  }, null, 2);
+  const filteredArtifacts = caseDetails ? filterCaseArtifacts(caseDetails.artifacts) : [];
+
+  // Fetch artifact files in parallel
+  const artifactResults = await Promise.allSettled(
+    filteredArtifacts.map(async (a) => {
+      const artifact = a as { id: string; artifact_type: string };
+      const file = await fetchArtifactAsBase64(String(artifact.id));
+      return { artifact, file };
+    }),
+  );
+
+  // Build multimodal content array
+  const contentParts: ContentPart[] = [];
+
+  for (const result of artifactResults) {
+    if (result.status !== 'fulfilled' || !result.value.file) continue;
+    const { artifact, file } = result.value;
+    const type = artifact.artifact_type?.toUpperCase();
+
+    if (type === 'DISPUTE_FORM') {
+      contentParts.push({
+        type: 'file',
+        file: {
+          filename: file.filename,
+          file_data: `data:application/pdf;base64,${file.base64}`,
+        },
+      });
+    } else if (type === 'FILE') {
+      contentParts.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${file.mimeType};base64,${file.base64}`,
+        },
+      });
+    }
+  }
+
+  // Append text signals as the final content part
+  contentParts.push({
+    type: 'text',
+    text: JSON.stringify({
+      dispute_profile: profile,
+      raw_signals: {
+        case_created_at: rawSignals.case_created_at,
+        tx_count_90_days: rawSignals.tx_count_90_days,
+        active_months: rawSignals.active_months,
+        prior_payments_to_merchant: rawSignals.prior_payments_to_merchant,
+        railsr_disputes_last_30_days: rawSignals.railsr_disputes_last_30_days,
+      },
+      case_details: caseDetails
+        ? {
+            artifacts: filterCaseArtifacts(caseDetails.artifacts),
+          }
+        : null,
+    }, null, 2),
+  });
+
+  // Use content array if we have file/image parts, plain string if text only
+  const userContent: string | ContentPart[] = contentParts.length === 1
+    ? (contentParts[0] as { type: 'text'; text: string }).text
+    : contentParts;
 
   const response = await analyzeWithLLM([
     { role: 'system', content: prompt.content },
-    { role: 'user', content: userMessage },
+    { role: 'user', content: userContent },
   ]);
 
   const parsed = parseJson(response.content);
