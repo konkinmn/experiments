@@ -23,7 +23,7 @@ The agent is doing two jobs: pattern recognition on structured signals, and judg
 The agent replicates what a CX agent does manually:
 
 1. Pull account signals (CIFAS, age, tier, dispute history, Money Maker, trust score)
-2. Review the dispute form (transaction, fraud type, crime reference, card status)
+2. Review the dispute form and any attached evidence files
 3. Assess risk level
 4. Either: submit `TaskCreationRequest` with correct parameters, ask for more evidence, or pass to a human with a summary
 
@@ -61,22 +61,22 @@ It contains a risk level and the raw signal values:
 | 🟡 Amber | One or more signals need attention |
 | 🔴 Red | High risk, requires careful handling |
 
+Risk level is derived from the rubric score (0–108). Green: score ≥ 70. Amber: score 40–69. Red: score < 40 or any hard gate signal present.
+
 All signals are DB lookups fetched via a single BQ query. None are LLM-derived. No hallucination risk on binary inputs. Full signal list and sources are in the Phase 1 spec.
 
 ---
 
 ### Layer 1 — Hard gates
 
-Run before LLM. If any gate fires: immediate `escalate_to_agent`, no scoring, no LLM call.
+Run before LLM. If any gate fires: immediate `escalate_to_agent`, no scoring, no LLM call. Gates are evaluated in priority order — first hit wins, but all triggered flags are logged.
 
-| Gate | Condition | Flag |
-|---|---|---|
-| CIFAS hit | `cifas_count > 0` | `cifas_flagged` |
-| Account inactive | `account_status !== ACCOUNT_IS_ACTIVE` | `account_inactive` |
-| Confirmed scammer | `scammer_count > 0` | `confirmed_scammer` |
-| Recent Railsr dispute | `railsr_disputes_last_6_months > 0` | `recent_railsr_dispute` |
-
-All triggered flags are included in the audit log regardless of which gate fired first.
+| Priority | Gate | Condition | Flag |
+|---|---|---|---|
+| 1 | CIFAS hit | `cifas_count > 0` | `cifas` |
+| 2 | Confirmed scammer | `scammer_count > 0` | `confirmed_scammer` |
+| 3 | Account inactive | `account_status !== ACCOUNT_IS_ACTIVE` | `account_not_active` |
+| 4 | Recent Railsr dispute | `railsr_disputes_last_6_months > 0` | `railsr_dispute_last_6_months` |
 
 Note: CIFAS should eventually distinguish fraud victim markers from perpetrator markers. For now, all CIFAS hits → `escalate_to_agent`.
 
@@ -84,7 +84,34 @@ Note: CIFAS should eventually distinguish fraud victim markers from perpetrator 
 
 ### Layer 2 — Planner (LLM)
 
-Receives the dispute profile artifact + form data. Outputs one of three decisions.
+Receives the dispute profile + filtered case artifacts. Outputs one of three decisions.
+
+**Planner input includes:**
+- Dispute profile (rubric score, risk level, all account signals)
+- Dispute form artifact (PDF — fetched from file-share service, passed as base64)
+- Evidence files (screenshots — fetched from media service, passed as base64 images)
+- Selected raw signals (tx_count_90d, active_months, prior_payments_to_merchant, railsr_disputes_30d)
+
+**Allowed artifact types passed to Planner:**
+- `DISPUTE_FORM` — the customer's dispute submission PDF
+- `FILE` — customer-uploaded screenshots/evidence
+
+All other artifact types (`DIALOGUE`, `AGENT_TASK`, `TRANSACTION`, `CASE_ACTION`, `CALL`) are stripped before the Planner sees the case.
+
+**File fetch flow:**
+```
+artifact.artifact_id
+        ↓
+GET https://file-share-ag.k1.anna.money/api/workstation/files/{artifact_id}
+        ↓
+response.data.path
+        ↓
+GET https://media.k1.anna.money{path}
+        ↓
+raw bytes → base64 → passed to LLM proxy
+```
+
+PDFs use `{ type: "file", file: { filename, file_data: "data:application/pdf;base64,..." } }`. Images use `{ type: "image_url", image_url: { url: "data:{mimeType};base64,..." } }`.
 
 **Planner output schema:**
 
@@ -93,14 +120,14 @@ Receives the dispute profile artifact + form data. Outputs one of three decision
   thought: string              // full reasoning chain — internal, not customer-facing
   decision: "credit" | "request_evidence" | "escalate_to_agent"
   credit_timing: "immediately" | "on_notification" | "on_win" | "none"
-  args: TaskCreationRequest    // only populated when decision = "credit"
+  args?: TaskCreationRequest   // only populated when decision = "credit"
   uncertainty_factors: string[] // what would change this decision; empty = no reservations
 }
 ```
 
 **The three decisions:**
 
-**`credit`** — case is ready to action. `args` contains the full `TaskCreationRequest` parameters:
+**`credit`** — case is ready to action. `args` maps directly to `POST /api/workstation/tasks` in anna-disputes:
 
 ```typescript
 {
@@ -118,31 +145,9 @@ Covers both scopes:
 - Sub-£25 goodwill credits → `is_dispute=false`, `credit_mode=IMMEDIATELY`
 - £25+ formal disputes → `is_dispute=true`, full chargeback lifecycle
 
-**`request_evidence`** — insufficient information. Phase 1: escalate to agent with note. Future: send evidence form via Gemma, re-run pipeline when artifacts arrive.
+**`request_evidence`** — insufficient information to decide. Phase 1: escalate to agent with note "evidence needed." Future: send evidence form via Gemma, re-run pipeline when artifacts arrive.
 
 **`escalate_to_agent`** — complex case, policy edge, or blocked dependency. Planner generates a full case summary for the agent.
-
-**System prompt structure:**
-
-```
-Role:
-You are ANNA's Dispute Resolution Agent. Your job is to assess whether a dispute 
-case can be safely credited now, or whether a human should handle it.
-
-Constraints:
-- Never invent or infer signal values. Use only what is in the dispute profile.
-- Never use language that implies ANNA admits liability.
-- uncertainty_factors must list specific signals that, if different, would have 
-  changed your decision. Empty array = no reservations.
-- escalate_to_agent is always available. When in doubt, use it.
-- auto_deny does not exist. You cannot deny a customer's dispute claim.
-
-Risk guidance:
-[rubric weights as advisory prose — account age, Money Maker, tier, etc.]
-
-Output:
-Respond with a single JSON object matching the output schema. No other text.
-```
 
 ---
 
@@ -156,7 +161,7 @@ Stateless. Receives `{decision, args}`. Executes exactly that. Makes zero decisi
 | `request_evidence` | Phase 1: escalate with note. Future: send Gemma instruction |
 | `escalate_to_agent` | Create WorkStation task with `thought` as agent summary |
 
-On failure: retry once, then escalate with `executor_failure` reason and original Planner output attached.
+On failure: retry once with same idempotency key → if still failing, write to audit log with `executor_failure`, surface as alert, do not attempt again.
 
 ---
 
@@ -179,17 +184,17 @@ On verification failure: log, escalate with full context.
 {
   case_id: number
   timestamp: string
-  pipeline_run: number           // 1 = first run, 2 = after evidence, etc.
+  pipeline_run: number
   gate_result: {
     passed: boolean
     triggered_gates: string[]
   }
-  dispute_profile: DisputeProfile   // full artifact snapshot
+  dispute_profile: DisputeProfile
   planner_output: {
     thought: string               // verbatim, internal
     decision: string
     credit_timing: string
-    args: object
+    args?: object
     uncertainty_factors: string[]
   }
   executor_result: {
@@ -214,10 +219,6 @@ On verification failure: log, escalate with full context.
 
 When evidence is requested and the customer responds, the same pipeline runs again on the same case with evidence artifacts as additional context.
 
-```typescript
-evidence_artifacts: Artifact[] | null
-```
-
 State gate:
 ```
 No evidence artifacts → run Planner normally
@@ -230,11 +231,26 @@ Phase 1: evidence request → escalate to agent with note. Evidence loop built i
 
 ---
 
+## Artifact type reference
+
+All artifact types found on dispute cases:
+
+| Type | What it is | Planner sees it |
+|---|---|---|
+| `DISPUTE_FORM` | Customer dispute submission PDF | Yes |
+| `FILE` | Customer-uploaded screenshots/evidence | Yes |
+| `TRANSACTION` | Linked transaction records | No — already in BQ signals |
+| `DIALOGUE` | Chat transcripts | No — too noisy |
+| `AGENT_TASK` | Linked agent tasks | No — reveals resolution history |
+| `CASE_ACTION` | Internal case actions | No — reveals agent actions |
+| `CALL` | Call recordings/logs | No — not parseable |
+
+---
+
 ## What is explicitly out of scope — forever
 
 - Chargeback lifecycle management (already automated in anna-disputes)
 - Balance API credit execution (daemon-owned)
-- Railsr submission workflow (Phase 4)
 - Auto-deny (hard gates escalate, never deny)
 - Customer-facing LLM output (Gemma is the customer interface)
 
@@ -261,5 +277,3 @@ Phase 1: evidence request → escalate to agent with note. Evidence loop built i
 | 3 | Evidence request automation + regulatory rationale | Request evidence via Gemma |
 | 4 | Railsr / chargeback automation | Submit to Railsr |
 | 5 | Evidence re-entry loop | Full stateful evidence workflow |
-
-
