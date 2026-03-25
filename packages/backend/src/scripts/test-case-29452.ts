@@ -62,7 +62,7 @@ check(
   `tx_count_90_days=${signals?.tx_count_90_days}`,
 );
 
-// --- Check 2: DISPUTE_FORM artifact fetched and base64-encoded without error ---
+// --- Check 2: DISPUTE_FORM artifact present in case_details metadata ---
 const profile = result.dispute_profile;
 const plannerOutput = result.planner_output;
 
@@ -92,9 +92,10 @@ check(
 
 // --- Check 3: Planner receives form content and references it in thought ---
 const thought = plannerOutput?.thought ?? '';
-// The planner should reference form-related keywords if it read the dispute form
-const formRelatedKeywords = ['form', 'pdf', 'dispute', 'fraud', 'card', 'transaction', 'claim', 'customer'];
-const referencesForm = formRelatedKeywords.some((kw) => thought.toLowerCase().includes(kw));
+// Use word-boundary regex to verify the planner engaged with the form artifact.
+// Simple .includes('form') would false-positive on "information", "performance", etc.
+const formSpecificPatterns = [/\bform\b/i, /\bpdf\b/i, /\bdocument\b/i, /\battachment\b/i, /\bsubmitted\b/i];
+const referencesForm = formSpecificPatterns.some((re) => re.test(thought));
 check(
   'Planner thought references form content',
   plannerOutput != null && referencesForm,

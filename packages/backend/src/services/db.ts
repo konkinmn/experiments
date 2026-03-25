@@ -34,6 +34,8 @@ export interface AnalysisJobUpdate {
 
 // Lazy singleton pool
 let _pool: pg.Pool | null = null;
+let _migrationsApplied = false;
+let _migrationsPromise: Promise<void> | null = null;
 
 function getPool(): pg.Pool {
   if (!_pool) {
@@ -44,6 +46,41 @@ function getPool(): pg.Pool {
     _pool = new Pool({ connectionString });
   }
   return _pool;
+}
+
+/**
+ * Apply runtime migrations that may not have run via docker-entrypoint-initdb.d
+ * (e.g. when the database volume already existed before a migration was added).
+ * All statements must be idempotent.
+ *
+ * Uses information_schema to check column existence first (SELECT-only), so the
+ * common case (column already exists) never requires DDL/ALTER privileges.
+ * A promise lock prevents concurrent first calls from issuing redundant DDL.
+ */
+async function ensureMigrations(): Promise<void> {
+  if (_migrationsApplied) return;
+  if (_migrationsPromise) return _migrationsPromise;
+  _migrationsPromise = applyMigrations();
+  return _migrationsPromise;
+}
+
+async function applyMigrations(): Promise<void> {
+  try {
+    const pool = getPool();
+    const { rows } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dispute_pipeline_runs' AND column_name = 'planner_raw_response'`,
+    );
+    if (rows.length === 0) {
+      await pool.query(
+        `ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS planner_raw_response TEXT`,
+      );
+    }
+    _migrationsApplied = true;
+  } catch (e) {
+    _migrationsPromise = null;
+    throw e;
+  }
 }
 
 export async function insertJob(job: AnalysisJobInsert): Promise<void> {
@@ -133,6 +170,7 @@ import type { PipelineRunRow, PipelineRunInsert } from '../types/dispute-pipelin
 export type { PipelineRunRow };
 
 export async function insertPipelineRun(row: PipelineRunInsert): Promise<PipelineRunRow> {
+  await ensureMigrations();
   const pool = getPool();
   const { rows } = await pool.query<PipelineRunRow>(
     `INSERT INTO dispute_pipeline_runs
