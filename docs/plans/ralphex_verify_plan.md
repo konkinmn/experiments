@@ -52,13 +52,13 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 5: Fix Planner prompt — tier eligibility and missing constraints
-- [ ] In `dispute-planner-v1.md`, add explicit constraint: "Tier C, D, and E are all eligible customers. Only Tier B indicates an unestablished account. Do not treat Tier C as elevated risk."
-- [ ] Add constraint: "You will always receive an open, unresolved case. Do not factor in any previous resolution history or outcome information when making your decision."
-- [ ] Add constraint: "If a dispute form PDF is provided, read it carefully — it contains the customer's fraud type, dispute reason, crime reference, and card status. This is the primary evidence for your decision."
-- [ ] Add constraint: "If FILE images are provided, examine them — they are customer-uploaded evidence supporting the dispute."
-- [ ] Ensure the output schema in the prompt matches the Zod schema in `dispute-pipeline.ts` exactly
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] In `dispute-planner-v1.md`, add explicit constraint: "Tier C, D, and E are all eligible customers. Only Tier B indicates an unestablished account. Do not treat Tier C as elevated risk."
+- [x] Add constraint: "You will always receive an open, unresolved case. Do not factor in any previous resolution history or outcome information when making your decision."
+- [x] Add constraint: "If a dispute form PDF is provided, read it carefully — it contains the customer's fraud type, dispute reason, crime reference, and card status. This is the primary evidence for your decision."
+- [x] Add constraint: "If FILE images are provided, examine them — they are customer-uploaded evidence supporting the dispute."
+- [x] Ensure the output schema in the prompt matches the Zod schema in `dispute-pipeline.ts` exactly
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 6: Fix risk level derivation — replace old OR logic with rubric score
 - [ ] In `dispute-pipeline.ts`, verify `deriveRiskLevel` uses rubric score thresholds: Green ≥ 70, Amber 40–69, Red < 40 or any hard gate
