@@ -137,8 +137,8 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
   const { rows } = await pool.query<PipelineRunRow>(
     `INSERT INTO dispute_pipeline_runs
        (case_id, raw_signals, case_details, dispute_profile, hard_gates, hard_gate_triggered,
-        planner_output, executor_action, pipeline_duration_ms, prompt_version)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        planner_output, executor_action, pipeline_duration_ms, prompt_version, planner_raw_response)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING *`,
     [
       row.case_id,
@@ -151,6 +151,7 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
       row.executor_action,
       row.pipeline_duration_ms,
       row.prompt_version,
+      row.planner_raw_response,
     ],
   );
   if (!rows[0]) throw new Error('Insert did not return a row');

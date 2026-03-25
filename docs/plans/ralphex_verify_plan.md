@@ -81,12 +81,12 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 8: Add planner raw response to audit log
-- [ ] Add `planner_raw_response TEXT` column to `dispute_pipeline_runs` in a new migration `init-db/003-planner-raw-response.sql`
-- [ ] In `dispute-pipeline.ts`, capture the raw LLM response string from `callPlanner` and pass it through to `insertPipelineRun`
-- [ ] Update `insertPipelineRun` in `db.ts` to save `planner_raw_response`
-- [ ] Update `PipelineRunRow` type in `dispute-pipeline.ts` to include `planner_raw_response?: string`
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Add `planner_raw_response TEXT` column to `dispute_pipeline_runs` in a new migration `init-db/003-planner-raw-response.sql`
+- [x] In `dispute-pipeline.ts`, capture the raw LLM response string from `callPlanner` and pass it through to `insertPipelineRun`
+- [x] Update `insertPipelineRun` in `db.ts` to save `planner_raw_response`
+- [x] Update `PipelineRunRow` type in `dispute-pipeline.ts` to include `planner_raw_response?: string`
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 9: Final integration test with case 29452
 - [ ] Run the pipeline against case 29452 and verify:

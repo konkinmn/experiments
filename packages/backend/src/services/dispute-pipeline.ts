@@ -315,6 +315,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
   const triggeredGate = checkHardGates(hardGates);
 
   let plannerOutput: PlannerOutput | null = null;
+  let plannerRawResponse: string | null = null;
 
   if (!triggeredGate) {
     // Layer 2: Planner
@@ -325,6 +326,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
         caseDetails ? { artifacts: caseDetails.artifacts as unknown[] } : null,
       );
       plannerOutput = result.output;
+      plannerRawResponse = result.rawResponse;
     } catch (err) {
       // Parse error fallback — escalate, don't throw
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -362,6 +364,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     executor_action: 'shadow',
     pipeline_duration_ms: duration,
     prompt_version: PROMPT_ID,
+    planner_raw_response: plannerRawResponse,
   });
 
   return row;
