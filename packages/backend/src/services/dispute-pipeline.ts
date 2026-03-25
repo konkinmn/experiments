@@ -161,9 +161,17 @@ const PlannerOutputSchema = z.object({
     is_dispute: z.literal(false),
     is_fraud: z.boolean(),
     credit_mode: z.literal('IMMEDIATELY'),
-    reason: z.string(),
-    fraud_type: z.string().optional(),
-    fraud_sub_type: z.string().optional(),
+    reason: z.enum(['NOT_AUTHORISED', 'DIFFERENT_AMOUNT', 'DUPLICATE', 'NO_FUNDS_FROM_ATM', 'OTHER']),
+    fraud_type: z.enum([
+      'LOST_CARD_FRAUD', 'STOLEN_CARD_FRAUD', 'COUNTERFEIT_CARD_FRAUD',
+      'ACCOUNT_TAKEOVER_FRAUD', 'CARD_NOT_PRESENT_FRAUD', 'BUST_OUT_COLLUSIVE_MERCHANT',
+      'FIRST_PARTY', 'MODIFICATION_OF_PAYMENT_ORDER', 'MANIPULATION_OF_CARDHOLDER',
+      'PAYMENT_CREATED_BY_FRAUDSTER', 'MANIPULATION_OF_PAYER_BY_FRAUDSTER',
+    ]).optional(),
+    fraud_sub_type: z.enum([
+      'CONVENIENCE_OR_BALANCE_TRANSFER', 'PIN_NOT_USED', 'PIN_USED', 'UNKNOWN',
+      'ADVANCE_FEE', 'IMPERSONATION', 'INVESTMENT', 'PURCHASE', 'ROMANCE',
+    ]).optional(),
     crime_reference: z.string().optional(),
   }).optional(),
   uncertainty_factors: z.array(z.string()),
@@ -285,13 +293,25 @@ async function callPlanner(
     { role: 'user', content: userContent },
   ]);
 
-  const parsed = parseJson(response.content);
+  const rawResponse = response.content;
+
+  const parsed = parseJson(rawResponse);
   if (!parsed) {
-    throw new Error(`Failed to parse JSON from LLM response: ${response.content}`);
+    throw Object.assign(
+      new Error(`Failed to parse JSON from LLM response`),
+      { rawResponse },
+    );
   }
 
-  const validated = PlannerOutputSchema.parse(parsed);
-  return { output: validated, rawResponse: response.content };
+  try {
+    const validated = PlannerOutputSchema.parse(parsed);
+    return { output: validated, rawResponse };
+  } catch (zodErr) {
+    throw Object.assign(
+      zodErr instanceof Error ? zodErr : new Error(String(zodErr)),
+      { rawResponse },
+    );
+  }
 }
 
 // --- Pipeline orchestrator ---
@@ -332,6 +352,10 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       // Parse error fallback — escalate, don't throw
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Planner error for case ${caseId}:`, errorMessage);
+      // Capture raw LLM response even on parse/validation failure
+      if (err && typeof err === 'object' && 'rawResponse' in err) {
+        plannerRawResponse = (err as { rawResponse: string }).rawResponse;
+      }
       plannerOutput = {
         thought: `Planner error: ${errorMessage}`,
         decision: 'escalate_to_agent',
