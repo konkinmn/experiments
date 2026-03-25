@@ -32,14 +32,14 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 3: Implement file fetch pipeline for artifacts
-- [ ] Add `FILE_SHARE_BASE_URL` and `MEDIA_BASE_URL` to environment config (with defaults: `https://file-share-ag.k1.anna.money` and `https://media.k1.anna.money`)
-- [ ] In `case-api.ts`, add `fetchArtifactAsBase64(artifactId: string): Promise<{ base64: string; mimeType: string; filename: string } | null>` function:
+- [x] Add `FILE_SHARE_BASE_URL` and `MEDIA_BASE_URL` to environment config (with defaults: `https://file-share-ag.k1.anna.money` and `https://media.k1.anna.money`)
+- [x] In `case-api.ts`, add `fetchArtifactAsBase64(artifactId: string): Promise<{ base64: string; mimeType: string; filename: string } | null>` function:
   - Step 1: `GET {FILE_SHARE_BASE_URL}/api/workstation/files/{artifactId}` with `Authorization: Bearer {API_TOKEN}` — extract `data.path`, `data.mime_type`, `data.name`
   - Step 2: `GET {MEDIA_BASE_URL}{data.path}` — fetch raw bytes
   - Step 3: encode bytes as base64, return `{ base64, mimeType: data.mime_type, filename: data.name }`
   - On any fetch failure: log warning, return `null` (never throw — individual file failures must not fail the pipeline)
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 4: Pass artifacts to Planner as multimodal content
 - [ ] In `dispute-pipeline.ts`, after filtering artifacts to `DISPUTE_FORM` and `FILE`, call `fetchArtifactAsBase64` for each artifact in parallel using `Promise.allSettled`
