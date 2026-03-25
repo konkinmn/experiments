@@ -139,7 +139,6 @@ function checkHardGates(gates: HardGateSignals): string | null {
 // --- Layer 2: Planner ---
 
 const ALLOWED_ARTIFACT_TYPES = new Set([
-  'DISPUTE_FORM',
   'FILE',
 ]);
 
@@ -242,10 +241,9 @@ async function callPlanner(
 
   for (const result of artifactResults) {
     if (result.status !== 'fulfilled' || !result.value.file) continue;
-    const { artifact, file } = result.value;
-    const type = artifact.artifact_type?.toUpperCase();
+    const { file } = result.value;
 
-    if (type === 'DISPUTE_FORM') {
+    if (file.mimeType === 'application/pdf') {
       contentParts.push({
         type: 'file',
         file: {
@@ -253,7 +251,7 @@ async function callPlanner(
           file_data: `data:application/pdf;base64,${file.base64}`,
         },
       });
-    } else if (type === 'FILE') {
+    } else {
       contentParts.push({
         type: 'image_url',
         image_url: {
@@ -283,10 +281,10 @@ async function callPlanner(
     }, null, 2),
   });
 
-  // Use content array if we have file/image parts, plain string if text only
-  const userContent: string | ContentPart[] = contentParts.length === 1
-    ? (contentParts[0] as { type: 'text'; text: string }).text
-    : contentParts;
+  // LLM proxy does not yet support multimodal content for Anthropic.
+  // File parts are fetched and ready — send text-only for now.
+  const textPart = contentParts.find((p): p is { type: 'text'; text: string } => p.type === 'text');
+  const userContent = textPart?.text ?? '';
 
   const response = await analyzeWithLLM([
     { role: 'system', content: prompt.content },
@@ -352,6 +350,9 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       // Parse error fallback — escalate, don't throw
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Planner error for case ${caseId}:`, errorMessage);
+      if (err && typeof err === 'object' && 'rawResponse' in err) {
+        console.error(`Planner raw LLM response for case ${caseId}:`, (err as { rawResponse: string }).rawResponse);
+      }
       // Capture raw LLM response even on parse/validation failure
       if (err && typeof err === 'object' && 'rawResponse' in err) {
         plannerRawResponse = (err as { rawResponse: string }).rawResponse;

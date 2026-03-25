@@ -168,7 +168,11 @@ export async function fetchArtifactAsBase64(artifactId: string): Promise<Artifac
 
     // Step 2: Fetch raw bytes from media service
     const mediaUrl = `${MEDIA_BASE_URL}${filePath}`;
-    const mediaResponse = await fetch(mediaUrl);
+    const mediaResponse = await fetch(mediaUrl, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+      },
+    });
 
     if (!mediaResponse.ok) {
       console.warn(`Media fetch failed for artifact ${artifactId}: ${mediaResponse.status} ${mediaResponse.statusText}`);

@@ -62,23 +62,23 @@ check(
   `tx_count_90_days=${signals?.tx_count_90_days}`,
 );
 
-// --- Check 2: DISPUTE_FORM artifact present in case_details metadata ---
+// --- Check 2: FILE artifact present in case_details metadata ---
 const profile = result.dispute_profile;
 const plannerOutput = result.planner_output;
 
-// Check that case_details has artifacts
+// Check that case_details has FILE artifacts (dispute form PDF + evidence)
 const caseDetails = result.case_details as { artifacts?: unknown[] } | null;
 const artifacts = caseDetails?.artifacts ?? [];
-const hasDisputeForm = artifacts.some(
+const hasFileArtifact = artifacts.some(
   (a) =>
     typeof a === 'object' &&
     a !== null &&
     'artifact_type' in a &&
-    (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'DISPUTE_FORM',
+    (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'FILE',
 );
 check(
-  'DISPUTE_FORM artifact present in case_details',
-  hasDisputeForm,
+  'FILE artifact present in case_details',
+  hasFileArtifact,
   `artifacts count=${artifacts.length}, types=${artifacts.map((a) => (a as { artifact_type?: string }).artifact_type).join(', ')}`,
 );
 

@@ -87,7 +87,7 @@ Hard gate check
       ↓ (if clear)
 Build dispute profile (rubric score + risk level)
       ↓
-Fetch + base64 encode DISPUTE_FORM and FILE artifacts
+Fetch + base64 encode FILE artifacts
       ↓
 Planner LLM call (profile + artifacts as context)
       ↓
@@ -110,8 +110,8 @@ Reviewer marks correct / incorrect + notes
 
 | Type | Format | Passed to Planner as |
 |---|---|---|
-| `DISPUTE_FORM` | PDF | `{ type: "file", file: { filename, file_data: "data:application/pdf;base64,..." } }` |
-| `FILE` | Image (screenshot) | `{ type: "image_url", image_url: { url: "data:{mimeType};base64,..." } }` |
+| `FILE` (PDF) | PDF | `{ type: "file", file: { filename, file_data: "data:application/pdf;base64,..." } }` |
+| `FILE` (image) | Image (screenshot) | `{ type: "image_url", image_url: { url: "data:{mimeType};base64,..." } }` |
 
 All other types stripped before Planner call.
 
@@ -241,7 +241,7 @@ Minimum sample before going live: 30 shadow cases within the narrow cohort, all 
 - ✅ Fix tx_count_90_days join (alias-based, no account_account join needed)
 - ✅ Risk level derivation updated to rubric score
 - ✅ Hard gate priority order defined
-- ✅ Artifact types audited and restricted to DISPUTE_FORM + FILE
+- ✅ Artifact types audited and restricted to FILE only (DISPUTE_FORM metadata lives on disputes service, not file-share; the dispute form PDF is a FILE artifact)
 - ✅ File fetch flow designed (file-share → media service → base64)
 
 ---

@@ -57,6 +57,7 @@ export async function analyzeWithLLM(messages: Message[]): Promise<LLMResponse> 
       model: LLM_MODEL,
       temperature: 0,
       seed: 777,
+      max_tokens: 4096,
     }),
   });
 
