@@ -129,11 +129,10 @@ function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals): D
 // --- Layer 1: Hard gates ---
 
 function checkHardGates(gates: HardGateSignals): string | null {
-  for (const [key, triggered] of Object.entries(gates)) {
-    if (triggered) {
-      return key;
-    }
-  }
+  if (gates.cifas) return 'cifas';
+  if (gates.confirmed_scammer) return 'confirmed_scammer';
+  if (gates.account_not_active) return 'account_not_active';
+  if (gates.railsr_dispute_last_6_months) return 'railsr_dispute_last_6_months';
   return null;
 }
 

@@ -68,7 +68,7 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
 - [x] Mark completed
 
 ### Task 7: Verify hard gate priority order
-- [ ] In `dispute-pipeline.ts`, verify `checkHardGates` uses explicit ordered checks (not `Object.entries` iteration):
+- [x] In `dispute-pipeline.ts`, verify `checkHardGates` uses explicit ordered checks (not `Object.entries` iteration):
   ```
   if (gates.cifas) return 'cifas';
   if (gates.confirmed_scammer) return 'confirmed_scammer';
@@ -76,9 +76,9 @@ Current state: core pipeline is implemented and running. Several gaps remain bef
   if (gates.railsr_dispute_last_6_months) return 'railsr_dispute_last_6_months';
   return null;
   ```
-- [ ] If using `Object.entries`, replace with the explicit ordered version above
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] If using `Object.entries`, replace with the explicit ordered version above
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 8: Add planner raw response to audit log
 - [ ] Add `planner_raw_response TEXT` column to `dispute_pipeline_runs` in a new migration `init-db/003-planner-raw-response.sql`
