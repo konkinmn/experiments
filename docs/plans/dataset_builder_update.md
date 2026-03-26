@@ -292,7 +292,7 @@ When Custom SQL selected: monospace textarea for BQ SQL, with note "Query must r
 
 ### Task 7: Frontend hooks and API client
 
-- [ ] Add to `packages/frontend/src/lib/api.ts`:
+- [x] Add to `packages/frontend/src/lib/api.ts`:
   - `getDatasets()`
   - `getDatasetPresets()`
   - `createDataset(name, description, sourceType, sourceConfig)`
@@ -301,7 +301,7 @@ When Custom SQL selected: monospace textarea for BQ SQL, with note "Query must r
   - `labelDatasetCase(id, label, notes, labeledBy)`
   - `deleteDatasetCase(id)`
 
-- [ ] Create `packages/frontend/src/hooks/useDatasetBuilder.ts`:
+- [x] Create `packages/frontend/src/hooks/useDatasetBuilder.ts`:
   - `useDatasets()` — query, invalidated on create/delete
   - `useDatasetPresets()` — query
   - `useCreateDataset()` — mutation
@@ -310,8 +310,8 @@ When Custom SQL selected: monospace textarea for BQ SQL, with note "Query must r
   - `useLabelDatasetCase()` — mutation, invalidates dataset
   - `useDeleteDatasetCase()` — mutation, invalidates dataset
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
