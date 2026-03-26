@@ -146,14 +146,14 @@ No fallback needed — the table has records from account creation. A case filed
 
 ### Task 7: Integration test — verify signal accuracy for case 29452
 
-- [ ] Run pipeline against case 29452 (filed 2026-02-28) and verify:
+- [x] Run pipeline against case 29452 (filed 2026-02-28) and verify:
   - `trust_score` returns BLUE (not AMBER — AMBER only appeared from 2026-03-03)
   - `account_age_days` returns ~432 days from 2026-02-28, not today's date
   - `tx_count_90_days` reflects transactions from 2025-11-30 to 2026-02-28 only
   - `tier` returns C (correct at filing date)
   - `railsr_disputes_last_6_months` counts only disputes before 2026-02-28
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 8: Update spec to document eval dataset signal behaviour
 
