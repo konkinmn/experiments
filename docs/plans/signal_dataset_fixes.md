@@ -157,7 +157,7 @@ No fallback needed — the table has records from account creation. A case filed
 
 ### Task 8: Update spec to document eval dataset signal behaviour
 
-- [ ] In `docs/specs/phase1.md`, add a new section after the BQ signal table titled **"Eval dataset accuracy"**:
+- [x] In `docs/specs/phase1.md`, add a new section after the BQ signal table titled **"Eval dataset accuracy"**:
 
 ```markdown
 ## Eval dataset accuracy
@@ -182,5 +182,5 @@ were at filing time, not today.
 | `trust_score` | `expiring_tables.compliance_trust_score_changes WHERE day <= DATE(case_created_at)` |
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed

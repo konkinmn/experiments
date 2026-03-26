@@ -69,6 +69,27 @@ Category 3 — Transaction Risk (max 20):
 
 **Tier eligibility note:** Tier C, D, E are all eligible customers. Only Tier B indicates an unestablished account.
 
+## Eval dataset accuracy
+
+> **Note: eval harness only.** The following applies to historical case testing in the
+> eval harness. In production, the pipeline runs at the moment of form submission, so
+> `CURRENT_TIMESTAMP()` and `case_created_at` are effectively the same. No separate
+> production handling is needed.
+
+All time-sensitive signals are calculated relative to `case_created_at`, not
+`CURRENT_TIMESTAMP()`. This ensures historical test cases return the signals as they
+were at filing time, not today.
+
+| Signal | Historical fix |
+|---|---|
+| `account_age_days` | `DATE_DIFF(DATE(case_created_at), DATE(account.created_at), DAY)` |
+| `tx_count_90_days`, `active_months`, `prior_payments_to_merchant` | Window: `[case_created_at - 90d, case_created_at)` |
+| `railsr_disputes_last_6_months` | Window: `[case_created_at - 6m, case_created_at)` |
+| `railsr_disputes_last_30_days` | Window: `[case_created_at - 30d, case_created_at)` |
+| `scammer_count`, `scam_victim_count` | Upper bound: `created_at < case_created_at` |
+| `tier` | `compliance_customer_tier_log` — prev_tier_name logic with COALESCE fallback |
+| `trust_score` | `expiring_tables.compliance_trust_score_changes WHERE day <= DATE(case_created_at)` |
+
 ---
 
 ### 2. Eval harness (dispute agent eval)
