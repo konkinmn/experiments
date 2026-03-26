@@ -48,7 +48,7 @@ CREATE INDEX idx_dataset_run_cases_run_id ON dataset_run_cases(run_id);
 
 ### Task 2: Backend — run config types and rubric override
 
-- [ ] Add to `packages/backend/src/types/dispute-pipeline.ts`:
+- [x] Add to `packages/backend/src/types/dispute-pipeline.ts`:
 
 ```typescript
 interface RubricWeights {
@@ -93,10 +93,10 @@ interface DatasetRunCase {
 }
 ```
 
-- [ ] Update `computeRubricScore` in `dispute-pipeline.ts` to accept optional `RubricWeights` parameter — falls back to defaults if not provided
-- [ ] Update `deriveRiskLevel` to use `green_threshold` and `amber_threshold` from weights if provided
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Update `computeRubricScore` in `dispute-pipeline.ts` to accept optional `RubricWeights` parameter — falls back to defaults if not provided
+- [x] Update `deriveRiskLevel` to use `green_threshold` and `amber_threshold` from weights if provided
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 

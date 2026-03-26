@@ -14,6 +14,7 @@ import type {
   PlannerOutput,
   PipelineRunRow,
   RiskLevel,
+  RubricWeights,
 } from '../types/dispute-pipeline.js';
 
 const PROMPT_ID = 'dispute-planner-v1';
@@ -58,6 +59,14 @@ function deriveHardGates(raw: CaseSignalsRaw): HardGateSignals {
   };
 }
 
+export const DEFAULT_RUBRIC_WEIGHTS: RubricWeights = {
+  account_trust_max: 58,
+  dispute_history_max: 30,
+  transaction_risk_max: 20,
+  green_threshold: 70,
+  amber_threshold: 40,
+};
+
 interface RubricScoreResult {
   total: number;
   account_trust: number;
@@ -65,8 +74,10 @@ interface RubricScoreResult {
   transaction_risk: number;
 }
 
-function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
-  // Category 1 — Account Trust (max 58)
+function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights): RubricScoreResult {
+  const w = weights ?? DEFAULT_RUBRIC_WEIGHTS;
+
+  // Category 1 — Account Trust
   let accountTrust = 0;
 
   if (raw.account_age_days >= 365) accountTrust += 20;
@@ -85,8 +96,9 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
   else if (trust === 'AMBER') accountTrust += 4;
 
   if (raw.tx_count_90_days >= 5) accountTrust += 5;
+  accountTrust = Math.min(accountTrust, w.account_trust_max);
 
-  // Category 2 — Dispute History (max 30)
+  // Category 2 — Dispute History
   let disputeHistory = 0;
 
   if (raw.railsr_disputes_last_6_months === 0) disputeHistory += 30;
@@ -96,8 +108,9 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
   if (raw.railsr_disputes_last_30_days > 0) disputeHistory -= 5;
   if (raw.scam_victim_count > 0) disputeHistory -= 5;
   disputeHistory = Math.max(disputeHistory, 0);
+  disputeHistory = Math.min(disputeHistory, w.dispute_history_max);
 
-  // Category 3 — Transaction Risk (max 20)
+  // Category 3 — Transaction Risk
   let transactionRisk = 0;
   const amount = Number(raw.max_transaction_amount);
   if (!isNaN(amount)) {
@@ -106,6 +119,7 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
     else if (amount < 15) transactionRisk += 9;
     else if (amount <= 25) transactionRisk += 5;
   }
+  transactionRisk = Math.min(transactionRisk, w.transaction_risk_max);
 
   return {
     total: accountTrust + disputeHistory + transactionRisk,
@@ -115,16 +129,18 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
   };
 }
 
-function deriveRiskLevel(hardGates: HardGateSignals, rubricScore: number): RiskLevel {
+function deriveRiskLevel(hardGates: HardGateSignals, rubricScore: number, weights?: RubricWeights): RiskLevel {
   if (Object.values(hardGates).some(Boolean)) return 'red';
-  if (rubricScore >= 70) return 'green';
-  if (rubricScore >= 40) return 'amber';
+  const greenThreshold = weights?.green_threshold ?? DEFAULT_RUBRIC_WEIGHTS.green_threshold;
+  const amberThreshold = weights?.amber_threshold ?? DEFAULT_RUBRIC_WEIGHTS.amber_threshold;
+  if (rubricScore >= greenThreshold) return 'green';
+  if (rubricScore >= amberThreshold) return 'amber';
   return 'red';
 }
 
-function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals): DisputeProfile {
-  const rubric = computeRubricScore(raw);
-  const riskLevel = deriveRiskLevel(hardGates, rubric.total);
+function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals, weights?: RubricWeights): DisputeProfile {
+  const rubric = computeRubricScore(raw, weights);
+  const riskLevel = deriveRiskLevel(hardGates, rubric.total, weights);
 
   const riskFactors: string[] = [];
   if (raw.cifas_count > 0) riskFactors.push('CIFAS marker present');

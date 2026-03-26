@@ -175,6 +175,48 @@ export function formatPipelineRun(row: PipelineRunRow) {
   };
 }
 
+// --- Dataset Run types ---
+
+export interface RubricWeights {
+  account_trust_max: number;      // default 58
+  dispute_history_max: number;    // default 30
+  transaction_risk_max: number;   // default 20
+  green_threshold: number;        // default 70
+  amber_threshold: number;        // default 40
+}
+
+export interface RunConfig {
+  model: string;                  // e.g. 'claude-sonnet-4-5@20250929'
+  prompt_version: string;         // e.g. 'dispute-planner-v1'
+  rubric_weights: RubricWeights;
+  name: string;                   // human-readable run name
+}
+
+export interface DatasetRun {
+  id: number;
+  dataset_id: number;
+  name: string;
+  config: RunConfig;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  created_at: string;
+  completed_at: string | null;
+  // computed
+  total_cases: number;
+  completed_cases: number;
+  agreement_rate: number | null;
+  credit_precision: number | null;
+  escalate_recall: number | null;
+}
+
+export interface DatasetRunCase {
+  id: number;
+  run_id: number;
+  dataset_case_id: number;
+  pipeline_run: PipelineRunRow | null;
+  label: DatasetLabel | null;
+  agreement: boolean | null;
+}
+
 // --- Dataset Builder types ---
 
 export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
