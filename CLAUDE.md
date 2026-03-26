@@ -71,7 +71,7 @@ The core domain logic in `dispute-pipeline.ts`:
 ### Database
 
 - PostgreSQL 16 (Docker Compose, port 5433, user/pass/db: `analytics`)
-- Tables: `analysis_jobs`, `dispute_pipeline_runs`, `datasets`, `dataset_cases`
+- Tables: `analysis_jobs`, `dispute_pipeline_runs`, `datasets`, `dataset_cases`, `dataset_runs`, `dataset_run_cases`
 - Migrations in `init-db/` (SQL files) + runtime auto-migrations in `db.ts`
 - External volume: `anna-ws-analytics_pgdata`
 

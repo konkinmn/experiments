@@ -44,10 +44,21 @@ interface ChatResponse {
   error?: Record<string, unknown>;
 }
 
-export async function analyzeWithLLM(messages: Message[]): Promise<LLMResponse> {
+function deriveProvider(model: string): string {
+  if (model.startsWith('gemini')) return 'GOOGLE';
+  return 'ANTHROPIC';
+}
+
+export async function analyzeWithLLM(
+  messages: Message[],
+  options?: { model?: string },
+): Promise<LLMResponse> {
   if (!LLM_API_BASE_URL) {
     throw new Error('LLM_API_BASE_URL is not configured');
   }
+
+  const model = options?.model || LLM_MODEL;
+  const provider = options?.model ? deriveProvider(options.model) : LLM_PROVIDER;
 
   const response = await fetch(`${LLM_API_BASE_URL}/api/chat`, {
     method: 'POST',
@@ -57,8 +68,8 @@ export async function analyzeWithLLM(messages: Message[]): Promise<LLMResponse> 
     },
     body: JSON.stringify({
       messages,
-      provider: LLM_PROVIDER,
-      model: LLM_MODEL,
+      provider,
+      model,
       temperature: 0,
       seed: 777,
       max_tokens: 4096,

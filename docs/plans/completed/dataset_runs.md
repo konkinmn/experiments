@@ -14,7 +14,7 @@ Extends the Dataset Builder with multi-run support. A dataset has cases with gro
 
 ### Task 1: DB migration — run tables
 
-- [ ] Create `init-db/006-dataset-runs.sql`:
+- [x] Create `init-db/006-dataset-runs.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS dataset_runs (
@@ -41,14 +41,14 @@ CREATE INDEX idx_dataset_runs_dataset_id ON dataset_runs(dataset_id);
 CREATE INDEX idx_dataset_run_cases_run_id ON dataset_run_cases(run_id);
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 2: Backend — run config types and rubric override
 
-- [ ] Add to `packages/backend/src/types/dispute-pipeline.ts`:
+- [x] Add to `packages/backend/src/types/dispute-pipeline.ts`:
 
 ```typescript
 interface RubricWeights {
@@ -93,17 +93,17 @@ interface DatasetRunCase {
 }
 ```
 
-- [ ] Update `computeRubricScore` in `dispute-pipeline.ts` to accept optional `RubricWeights` parameter — falls back to defaults if not provided
-- [ ] Update `deriveRiskLevel` to use `green_threshold` and `amber_threshold` from weights if provided
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Update `computeRubricScore` in `dispute-pipeline.ts` to accept optional `RubricWeights` parameter — falls back to defaults if not provided
+- [x] Update `deriveRiskLevel` to use `green_threshold` and `amber_threshold` from weights if provided
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 3: Backend — available prompts endpoint
 
-- [ ] In `packages/backend/src/services/prompts.ts`, add `listPrompts(): string[]` — scans the prompts directory, returns all `.md` filenames without extension (e.g. `['dispute-planner-v1', 'dispute-planner-v2']`)
-- [ ] Add `GET /api/datasets/run-options` endpoint returning:
+- [x] In `packages/backend/src/services/prompts.ts`, add `listPrompts(): string[]` — scans the prompts directory, returns all `.md` filenames without extension (e.g. `['dispute-planner-v1', 'dispute-planner-v2']`)
+- [x] Add `GET /api/datasets/run-options` endpoint returning:
 
 ```typescript
 {
@@ -121,14 +121,14 @@ claude-opus-4-6
 gemini-2.5-flash
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 4: Backend — run execution
 
-- [ ] Add DB functions to `db.ts`:
+- [x] Add DB functions to `db.ts`:
   - `insertDatasetRun(datasetId, name, config)` → returns run row
   - `insertDatasetRunCases(runId, datasetCaseIds)` → batch insert
   - `updateDatasetRunCaseResult(runCaseId, pipelineRunId)`
@@ -136,7 +136,7 @@ gemini-2.5-flash
   - `listDatasetRuns(datasetId)` → with agreement metrics computed in SQL
   - `getDatasetRunCases(runId)` → joined with pipeline_runs and dataset_cases labels
 
-- [ ] Add `POST /api/datasets/:id/runs` endpoint:
+- [x] Add `POST /api/datasets/:id/runs` endpoint:
   1. Validate run config (model, prompt_version must be non-empty)
   2. Insert `dataset_runs` row with status `pending`
   3. Fetch all `dataset_cases` for this dataset
@@ -147,17 +147,17 @@ gemini-2.5-flash
   8. On all complete: set status to `completed`, stamp `completed_at`
   9. Return run immediately with status `pending` — frontend polls
 
-- [ ] Update `runDisputePipeline` to accept optional `RunConfig` — uses config model/prompt/weights instead of env defaults when provided
-- [ ] Add `GET /api/datasets/:id/runs` — list all runs for dataset with metrics
-- [ ] Add `GET /api/dataset-runs/:runId/cases` — all run cases with pipeline output + label
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Update `runDisputePipeline` to accept optional `RunConfig` — uses config model/prompt/weights instead of env defaults when provided
+- [x] Add `GET /api/datasets/:id/runs` — list all runs for dataset with metrics
+- [x] Add `GET /api/dataset-runs/:runId/cases` — all run cases with pipeline output + label
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 5: Backend — agreement metrics
 
-- [ ] Agreement is computed at query time in `listDatasetRuns`. For each run, compute:
+- [x] Agreement is computed at query time in `listDatasetRuns`. For each run, compute:
 
 ```sql
 -- agreement_rate: planner decision matches label
@@ -195,15 +195,15 @@ WHERE r.dataset_id = $1
 GROUP BY r.id
 ```
 
-- [ ] Expose metrics on `DatasetRun` type
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Expose metrics on `DatasetRun` type
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 6: Frontend — dataset page with run tabs
 
-- [ ] Update `DatasetDetail.tsx`:
+- [x] Update `DatasetDetail.tsx`:
 
 **Tab structure:**
 ```
@@ -229,14 +229,14 @@ Agreement  Credit precision  Escalate recall   Cases
 
 **Loading state:** if run status is `running` or `pending`, show progress bar "Running pipeline for N cases..." with completed/total count. Poll every 3s.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 7: Frontend — new run modal
 
-- [ ] Create `NewRunModal` component
+- [x] Create `NewRunModal` component
 
 **Fields:**
 - Run name (text input, e.g. "Sonnet v2 test")
@@ -252,38 +252,38 @@ Agreement  Credit precision  Escalate recall   Cases
 
 On submit: `POST /api/datasets/:id/runs` with full config. Modal closes, new tab appears with loading state.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 8: Frontend hooks and API
 
-- [ ] Add to `api.ts`:
+- [x] Add to `api.ts`:
   - `getRunOptions()`
   - `createDatasetRun(datasetId, config)`
   - `getDatasetRuns(datasetId)`
   - `getDatasetRunCases(runId)`
 
-- [ ] Add to `useDatasetBuilder.ts`:
+- [x] Add to `useDatasetBuilder.ts`:
   - `useRunOptions()` — query
   - `useCreateRun()` — mutation, invalidates dataset runs
   - `useDatasetRuns(datasetId)` — query
   - `useDatasetRunCases(runId)` — query, polls every 3s if run status is pending/running
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
 ### Task 9: Integration test
 
-- [ ] Open a dataset with labeled cases
-- [ ] Click `+ New run`, configure with default settings, create — verify run tab appears with loading state
-- [ ] Wait for completion — verify agreement metrics appear in tab header
-- [ ] Create second run with different model — verify two run tabs exist independently
-- [ ] Verify agreement indicator (✓/✗) appears per case in run tab
-- [ ] Verify labels tab shows ground truth only, no pipeline output
-- [ ] Verify rubric weight override changes scores in second run vs first
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Open a dataset with labeled cases
+- [x] Click `+ New run`, configure with default settings, create — verify run tab appears with loading state
+- [x] Wait for completion — verify agreement metrics appear in tab header
+- [x] Create second run with different model — verify two run tabs exist independently
+- [x] Verify agreement indicator (✓/✗) appears per case in run tab
+- [x] Verify labels tab shows ground truth only, no pipeline output
+- [x] Verify rubric weight override changes scores in second run vs first
+- [x] Run validation commands
+- [x] Mark completed

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { DatasetLabel, DatasetSourceType } from '@/types';
+import type { DatasetLabel, DatasetSourceType, RubricWeights } from '@/types';
 
 export function useDatasets() {
   return useQuery({
@@ -70,5 +70,70 @@ export function useDeleteDatasetCase() {
       queryClient.invalidateQueries({ queryKey: ['dataset'] });
       queryClient.invalidateQueries({ queryKey: ['datasets'] });
     },
+  });
+}
+
+export function useLabelRunCase() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, label, notes, labeledBy }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null }) =>
+      api.labelRunCase(id, label, notes, labeledBy),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-run-cases'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });
+    },
+  });
+}
+
+export function useRunOptions() {
+  return useQuery({
+    queryKey: ['run-options'],
+    queryFn: () => api.getRunOptions(),
+  });
+}
+
+export function useDatasetRuns(datasetId: number, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['dataset-runs', datasetId],
+    queryFn: () => api.getDatasetRuns(datasetId),
+    select: (response) => response.data,
+    enabled: options?.enabled ?? true,
+    refetchInterval: (query) => {
+      const runs = query.state.data?.data;
+      if (!runs) return false;
+      const hasActive = runs.some((r) => r.status === 'pending' || r.status === 'running');
+      return hasActive ? 3000 : false;
+    },
+  });
+}
+
+export function useCreateRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      datasetId: number;
+      name: string;
+      model: string;
+      prompt_version: string;
+      rubric_weights: RubricWeights;
+    }) => api.createDatasetRun(params.datasetId, {
+      name: params.name,
+      model: params.model,
+      prompt_version: params.prompt_version,
+      rubric_weights: params.rubric_weights,
+    }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-runs', variables.datasetId] });
+    },
+  });
+}
+
+export function useDatasetRunCases(runId: number, options?: { enabled?: boolean; polling?: boolean }) {
+  return useQuery({
+    queryKey: ['dataset-run-cases', runId],
+    queryFn: () => api.getDatasetRunCases(runId),
+    select: (response) => response.data,
+    enabled: options?.enabled ?? true,
+    refetchInterval: options?.polling ? 3000 : false,
   });
 }

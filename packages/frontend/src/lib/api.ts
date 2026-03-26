@@ -11,6 +11,10 @@ import type {
   DatasetCase,
   DatasetLabel,
   DatasetSourceType,
+  DatasetRun,
+  DatasetRunCase,
+  RunOptions,
+  RubricWeights,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -110,8 +114,30 @@ export const api = {
       body: JSON.stringify({ label, notes, labeledBy }),
     }),
 
+  labelRunCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null) =>
+    fetchApi<{ success: boolean }>(`/api/datasets/run-cases/${id}/label`, {
+      method: 'PATCH',
+      body: JSON.stringify({ label, notes, labeledBy }),
+    }),
+
   deleteDatasetCase: (id: number) =>
     fetchApi<{ success: boolean }>(`/api/datasets/cases/${id}`, {
       method: 'DELETE',
     }),
+
+  // Dataset Runs API
+  getRunOptions: () =>
+    fetchApi<RunOptions>('/api/datasets/run-options'),
+
+  getDatasetRuns: (datasetId: number) =>
+    fetchApi<{ data: DatasetRun[] }>(`/api/datasets/${datasetId}/runs`),
+
+  createDatasetRun: (datasetId: number, config: { name: string; model: string; prompt_version: string; rubric_weights: RubricWeights }) =>
+    fetchApi<DatasetRun>(`/api/datasets/${datasetId}/runs`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }),
+
+  getDatasetRunCases: (runId: number) =>
+    fetchApi<{ data: DatasetRunCase[] }>(`/api/datasets/runs/${runId}/cases`),
 };

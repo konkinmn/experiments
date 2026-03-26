@@ -16,6 +16,7 @@ interface ResultsTableProps {
   datasetCases?: DatasetCase[];
   onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string) => void;
   onDeleteCase?: (datasetCaseId: number) => void;
+  agreementMap?: Record<number, boolean | null>;
 }
 
 const RISK_BADGE: Record<RiskLevel, { label: string; variant: 'green' | 'amber' | 'red' }> = {
@@ -132,7 +133,7 @@ function formatSignalValue(value: unknown): string {
   return String(value);
 }
 
-export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase }: ResultsTableProps) {
+export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, agreementMap }: ResultsTableProps) {
   if (verdictOptions === 'dataset') {
     const cases = datasetCases ?? [];
     if (cases.length === 0) {
@@ -234,7 +235,26 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
                     )}
                   </div>
                 </div>
-                {onDeleteCase && (
+                {agreementMap && (
+                  <div className="ml-auto">
+                    {agreementMap[dc.id] === true && (
+                      <div className="h-7 w-7 rounded-full bg-green-100 flex items-center justify-center" title="Agrees with label">
+                        <Check className="h-4 w-4 text-green-600" />
+                      </div>
+                    )}
+                    {agreementMap[dc.id] === false && (
+                      <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center" title="Disagrees with label">
+                        <X className="h-4 w-4 text-red-600" />
+                      </div>
+                    )}
+                    {agreementMap[dc.id] == null && (
+                      <div className="h-7 w-7 rounded-full bg-gray-100 flex items-center justify-center" title="No agreement data">
+                        <span className="text-gray-400 text-sm">—</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {!agreementMap && onDeleteCase && (
                   <div className="ml-auto">
                     <button
                       className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors"

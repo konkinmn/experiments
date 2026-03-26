@@ -14,6 +14,8 @@ import type {
   PlannerOutput,
   PipelineRunRow,
   RiskLevel,
+  RubricWeights,
+  RunConfig,
 } from '../types/dispute-pipeline.js';
 
 const PROMPT_ID = 'dispute-planner-v1';
@@ -58,6 +60,14 @@ function deriveHardGates(raw: CaseSignalsRaw): HardGateSignals {
   };
 }
 
+export const DEFAULT_RUBRIC_WEIGHTS: RubricWeights = {
+  account_trust_max: 58,
+  dispute_history_max: 30,
+  transaction_risk_max: 20,
+  green_threshold: 70,
+  amber_threshold: 40,
+};
+
 interface RubricScoreResult {
   total: number;
   account_trust: number;
@@ -65,8 +75,10 @@ interface RubricScoreResult {
   transaction_risk: number;
 }
 
-function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
-  // Category 1 — Account Trust (max 58)
+function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights): RubricScoreResult {
+  const w = weights ?? DEFAULT_RUBRIC_WEIGHTS;
+
+  // Category 1 — Account Trust
   let accountTrust = 0;
 
   if (raw.account_age_days >= 365) accountTrust += 20;
@@ -85,8 +97,9 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
   else if (trust === 'AMBER') accountTrust += 4;
 
   if (raw.tx_count_90_days >= 5) accountTrust += 5;
+  accountTrust = Math.min(accountTrust, w.account_trust_max);
 
-  // Category 2 — Dispute History (max 30)
+  // Category 2 — Dispute History
   let disputeHistory = 0;
 
   if (raw.railsr_disputes_last_6_months === 0) disputeHistory += 30;
@@ -96,8 +109,9 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
   if (raw.railsr_disputes_last_30_days > 0) disputeHistory -= 5;
   if (raw.scam_victim_count > 0) disputeHistory -= 5;
   disputeHistory = Math.max(disputeHistory, 0);
+  disputeHistory = Math.min(disputeHistory, w.dispute_history_max);
 
-  // Category 3 — Transaction Risk (max 20)
+  // Category 3 — Transaction Risk
   let transactionRisk = 0;
   const amount = Number(raw.max_transaction_amount);
   if (!isNaN(amount)) {
@@ -106,6 +120,7 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
     else if (amount < 15) transactionRisk += 9;
     else if (amount <= 25) transactionRisk += 5;
   }
+  transactionRisk = Math.min(transactionRisk, w.transaction_risk_max);
 
   return {
     total: accountTrust + disputeHistory + transactionRisk,
@@ -115,16 +130,18 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
   };
 }
 
-function deriveRiskLevel(hardGates: HardGateSignals, rubricScore: number): RiskLevel {
+function deriveRiskLevel(hardGates: HardGateSignals, rubricScore: number, weights?: RubricWeights): RiskLevel {
   if (Object.values(hardGates).some(Boolean)) return 'red';
-  if (rubricScore >= 70) return 'green';
-  if (rubricScore >= 40) return 'amber';
+  const greenThreshold = weights?.green_threshold ?? DEFAULT_RUBRIC_WEIGHTS.green_threshold;
+  const amberThreshold = weights?.amber_threshold ?? DEFAULT_RUBRIC_WEIGHTS.amber_threshold;
+  if (rubricScore >= greenThreshold) return 'green';
+  if (rubricScore >= amberThreshold) return 'amber';
   return 'red';
 }
 
-function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals): DisputeProfile {
-  const rubric = computeRubricScore(raw);
-  const riskLevel = deriveRiskLevel(hardGates, rubric.total);
+function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals, weights?: RubricWeights): DisputeProfile {
+  const rubric = computeRubricScore(raw, weights);
+  const riskLevel = deriveRiskLevel(hardGates, rubric.total, weights);
 
   const riskFactors: string[] = [];
   if (raw.cifas_count > 0) riskFactors.push('CIFAS marker present');
@@ -335,10 +352,12 @@ async function callPlanner(
   rawSignals: CaseSignalsRaw,
   caseDetails: { artifacts: unknown[] } | null,
   enrichment: EnrichmentData,
+  options?: { model?: string; promptVersion?: string },
 ): Promise<{ output: PlannerOutput; rawResponse: string; plannerRequest: Record<string, unknown>; systemPrompt: string }> {
-  const prompt = await getPromptById(PROMPT_ID);
+  const promptId = options?.promptVersion || PROMPT_ID;
+  const prompt = await getPromptById(promptId);
   if (!prompt) {
-    throw new Error(`Prompt ${PROMPT_ID} not found`);
+    throw new Error(`Prompt ${promptId} not found`);
   }
 
   // Build text payload with three enrichment sections
@@ -395,10 +414,10 @@ async function callPlanner(
       { role: 'user', content: JSON.stringify(redactedPayload, null, 2) },
     ],
     provider: 'ANTHROPIC',
-    model: process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929',
+    model: options?.model || process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929',
   }, null, 2));
 
-  const response = await analyzeWithLLM(plannerMessages);
+  const response = await analyzeWithLLM(plannerMessages, { model: options?.model });
 
   const rawResponse = response.content;
 
@@ -423,7 +442,10 @@ async function callPlanner(
 
 // --- Pipeline orchestrator ---
 
-export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow> {
+export async function runDisputePipeline(
+  caseId: number,
+  runConfig?: RunConfig,
+): Promise<PipelineRunRow> {
   const start = Date.now();
 
   // Layer 0: Fetch signals + case details + case actions in parallel
@@ -436,9 +458,9 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     fetchCaseActions(caseId),
   ]);
 
-  // Build dispute profile
+  // Build dispute profile (use rubric weights from run config if provided)
   const hardGates = deriveHardGates(rawSignals);
-  const profile = buildDisputeProfile(rawSignals, hardGates);
+  const profile = buildDisputeProfile(rawSignals, hardGates, runConfig?.rubric_weights);
 
   // Layer 1: Hard gates
   const triggeredGate = checkHardGates(hardGates);
@@ -503,6 +525,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
         rawSignals,
         caseDetails ? { artifacts: caseDetails.artifacts as unknown[] } : null,
         { caseActions, customerDialogueMessages, parsedFileDescriptions },
+        runConfig ? { model: runConfig.model, promptVersion: runConfig.prompt_version } : undefined,
       );
       plannerOutput = result.output;
       plannerRawResponse = result.rawResponse;
@@ -550,7 +573,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     planner_output: plannerOutput,
     executor_action: 'shadow',
     pipeline_duration_ms: duration,
-    prompt_version: PROMPT_ID,
+    prompt_version: runConfig?.prompt_version || PROMPT_ID,
     planner_raw_response: plannerRawResponse,
     case_actions: caseActions.length > 0 ? caseActions : null,
     planner_request: plannerRequest,
