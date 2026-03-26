@@ -83,12 +83,12 @@ This plan adds fetching and passing of both artifact types. Neither requires Gem
 
 ### Task 5: Integration test with case 29452
 
-- [ ] Run pipeline against case 29452 and verify:
+- [x] Run pipeline against case 29452 and verify:
   - `CASE_ACTION` with `action_type: DISPUTE_FORM_FILLED` is fetched and `metadata.crime_ref_number: RF26020134020C` appears in Planner context
   - Customer dialogue messages are present in Planner context
   - Planner `thought` references the crime reference number
   - Planner `args.crime_reference` is populated with `RF26020134020C`
   - Decision is `credit` or a well-reasoned escalation — NOT escalation due to missing crime reference
-- [ ] If Planner still escalates, check `thought` for the actual reason — fix prompt if needed
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] If Planner still escalates, check `thought` for the actual reason — fix prompt if needed
+- [x] Run validation commands
+- [x] Mark completed
