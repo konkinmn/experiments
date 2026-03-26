@@ -28,6 +28,7 @@ function formatRow(row: PipelineRunRow) {
     promptVersion: row.prompt_version,
     plannerRawResponse: row.planner_raw_response,
     evidenceArtifacts: row.evidence_artifacts,
+    caseActions: row.case_actions,
     reviewerVerdict: row.reviewer_verdict,
     reviewerNotes: row.reviewer_notes,
     reviewedAt: row.reviewed_at,

@@ -170,8 +170,6 @@ function checkHardGates(gates: HardGateSignals): string | null {
 
 const ALLOWED_ARTIFACT_TYPES = new Set([
   'FILE',
-  'CASE_ACTION',
-  'DIALOGUE',
 ]);
 
 function filterCaseArtifacts(artifacts: unknown[]): unknown[] {
