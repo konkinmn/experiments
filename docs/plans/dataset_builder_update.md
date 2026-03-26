@@ -317,13 +317,13 @@ When Custom SQL selected: monospace textarea for BQ SQL, with note "Query must r
 
 ### Task 8: Integration test
 
-- [ ] Navigate to `/dataset` — verify empty state shows
-- [ ] Create dataset using "Clear credit" preset — verify modal works, dataset card appears, navigates to detail page
-- [ ] On detail page — verify cases load with pipeline results (may take 30-60s for batch)
-- [ ] Label one case Credit, one Escalate, one Needs more info — verify labels persist on reload
-- [ ] Create second dataset using Case ID list — enter 3 case IDs manually, verify all three run
-- [ ] Create third dataset using Custom SQL — enter valid BQ query returning case_ids, verify it runs
-- [ ] Delete a dataset — verify it disappears from list
-- [ ] Export XLSX from a labeled dataset — verify label column present
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Navigate to `/dataset` — verify empty state shows
+- [x] Create dataset using "Clear credit" preset — verify modal works, dataset card appears, navigates to detail page
+- [x] On detail page — verify cases load with pipeline results (may take 30-60s for batch)
+- [x] Label one case Credit, one Escalate, one Needs more info — verify labels persist on reload
+- [x] Create second dataset using Case ID list — enter 3 case IDs manually, verify all three run
+- [x] Create third dataset using Custom SQL — enter valid BQ query returning case_ids, verify it runs
+- [x] Delete a dataset — verify it disappears from list
+- [x] Export XLSX from a labeled dataset — verify label column present
+- [x] Run validation commands
+- [x] Mark completed
