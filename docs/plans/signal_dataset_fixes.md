@@ -31,7 +31,7 @@ DATE_DIFF(DATE(cd.case_created_at), DATE(ac.created_at), DAY) AS account_age_day
 
 ### Task 2: Fix transaction activity window
 
-- [ ] In `signals-query.ts`, update the `transaction_activity` CTE to use `case_created_at` as reference point:
+- [x] In `signals-query.ts`, update the `transaction_activity` CTE to use `case_created_at` as reference point:
 
 ```sql
 -- before
@@ -44,8 +44,8 @@ AND post_timestamp < cd.case_created_at
 
 This fixes `tx_count_90_days`, `active_months`, and `prior_payments_to_merchant` — all three are in the same CTE.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 3: Fix dispute history windows
 

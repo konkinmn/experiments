@@ -78,7 +78,7 @@ transaction_activity AS (
     COUNTIF(t.merchant_info_name IN (SELECT merchant_info_name FROM case_merchants)) AS prior_payments_to_merchant
   FROM \`anna-money.trusted.business_account__processed_transactions\` t
   WHERE t.alias = (SELECT alias FROM case_data)
-    AND t.post_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)
+    AND t.post_timestamp >= TIMESTAMP_SUB((SELECT case_created_at FROM case_data), INTERVAL 90 DAY)
     AND t.post_timestamp < (SELECT case_created_at FROM case_data)
 ),
 dispute_history AS (
