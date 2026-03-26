@@ -1,3 +1,5 @@
+import type { CaseAction } from '../types/dispute-pipeline.js';
+
 export interface TimelineEntry {
   id: number;
   category: string;
@@ -34,6 +36,7 @@ export interface CaseDetails {
 const CASE_API_BASE_URL = process.env.CASE_API_BASE_URL || 'https://case-ag.k1.anna.money';
 const FILE_SHARE_BASE_URL = process.env.FILE_SHARE_BASE_URL || 'https://file-share-ag.k1.anna.money';
 const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || 'https://media.k1.anna.money';
+const TASKS_BASE_URL = process.env.TASKS_BASE_URL || 'https://tasks.k1.anna.money';
 const API_TOKEN = process.env.API_TOKEN || '';
 
 export async function fetchCaseTimeline(caseId: number): Promise<CaseTimeline> {
@@ -186,6 +189,29 @@ export async function fetchArtifactAsBase64(artifactId: string): Promise<Artifac
   } catch (err) {
     console.warn(`Failed to fetch artifact ${artifactId}:`, err instanceof Error ? err.message : String(err));
     return null;
+  }
+}
+
+export async function fetchCaseActions(caseId: number): Promise<CaseAction[]> {
+  try {
+    const url = `${TASKS_BASE_URL}/api/workstation/case-actions?case_id=${caseId}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`Failed to fetch case actions for case ${caseId}: ${response.status} ${response.statusText}`);
+      return [];
+    }
+
+    const body = await response.json() as { data?: CaseAction[] };
+    return body.data || [];
+  } catch (err) {
+    console.warn(`Failed to fetch case actions for case ${caseId}:`, err instanceof Error ? err.message : String(err));
+    return [];
   }
 }
 

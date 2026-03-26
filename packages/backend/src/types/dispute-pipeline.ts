@@ -1,5 +1,18 @@
 export type RiskLevel = 'green' | 'amber' | 'red';
 
+export interface CaseAction {
+  id: number;
+  action_type: string;
+  status: string;
+  created_at: string;
+  metadata: {
+    crime_ref_number?: string;
+    crime_date?: string;
+    dispute_form_file_id?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface CaseSignalsRaw {
   case_id: number;
   company_id: number;

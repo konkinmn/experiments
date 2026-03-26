@@ -14,11 +14,11 @@ This plan adds fetching and passing of both artifact types. Neither requires Gem
 
 ### Task 1: Fetch CASE_ACTION artifacts and extract structured metadata
 
-- [ ] In `case-api.ts`, add a `fetchCaseActions(caseId: number): Promise<CaseAction[]>` function:
+- [x] In `case-api.ts`, add a `fetchCaseActions(caseId: number): Promise<CaseAction[]>` function:
   - `GET https://tasks.k1.anna.money/api/workstation/case-actions?case_id={caseId}` with `Authorization: Bearer {API_TOKEN}`
   - Return the `data` array from the response
   - On failure: log warning, return empty array — do not throw
-- [ ] Add `CaseAction` type to backend types:
+- [x] Add `CaseAction` type to backend types:
   ```typescript
   interface CaseAction {
     id: number
@@ -33,8 +33,8 @@ This plan adds fetching and passing of both artifact types. Neither requires Gem
     }
   }
   ```
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 2: Fetch DIALOGUE artifacts and extract message content
 
