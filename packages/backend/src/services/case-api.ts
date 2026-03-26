@@ -1,4 +1,4 @@
-import type { CaseAction } from '../types/dispute-pipeline.js';
+import type { CaseAction, DialogueMessage } from '../types/dispute-pipeline.js';
 
 export interface TimelineEntry {
   id: number;
@@ -37,6 +37,7 @@ const CASE_API_BASE_URL = process.env.CASE_API_BASE_URL || 'https://case-ag.k1.a
 const FILE_SHARE_BASE_URL = process.env.FILE_SHARE_BASE_URL || 'https://file-share-ag.k1.anna.money';
 const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || 'https://media.k1.anna.money';
 const TASKS_BASE_URL = process.env.TASKS_BASE_URL || 'https://tasks.k1.anna.money';
+const CHAT_BASE_URL = process.env.CHAT_BASE_URL || 'https://chat.k1.anna.money';
 const API_TOKEN = process.env.API_TOKEN || '';
 
 export async function fetchCaseTimeline(caseId: number): Promise<CaseTimeline> {
@@ -213,6 +214,98 @@ export async function fetchCaseActions(caseId: number): Promise<CaseAction[]> {
     console.warn(`Failed to fetch case actions for case ${caseId}:`, err instanceof Error ? err.message : String(err));
     return [];
   }
+}
+
+export async function fetchCaseDialogues(artifactIds: string[]): Promise<DialogueMessage[]> {
+  if (artifactIds.length === 0) return [];
+
+  const allMessages: DialogueMessage[] = [];
+
+  try {
+    // Step 1: Get dialogue records including alias
+    const dialoguesUrl = `${TASKS_BASE_URL}/api/v3/dialogues?id=${artifactIds.join(',')}`;
+    const dialoguesResponse = await fetch(dialoguesUrl, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!dialoguesResponse.ok) {
+      console.warn(`Failed to fetch dialogues: ${dialoguesResponse.status} ${dialoguesResponse.statusText}`);
+      return [];
+    }
+
+    const dialoguesBody = await dialoguesResponse.json() as {
+      data?: Array<{ id: number; alias: string }>;
+    };
+    const dialogues = dialoguesBody.data || [];
+
+    // Process each dialogue
+    for (const dialogue of dialogues) {
+      try {
+        // Step 2: Get message IDs for this dialogue
+        const messagesUrl = `${TASKS_BASE_URL}/api/v3/messages?dialogue_id=${dialogue.id}`;
+        const messagesResponse = await fetch(messagesUrl, {
+          headers: {
+            Authorization: `Bearer ${API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!messagesResponse.ok) {
+          console.warn(`Failed to fetch messages for dialogue ${dialogue.id}: ${messagesResponse.status}`);
+          continue;
+        }
+
+        const messagesBody = await messagesResponse.json() as {
+          data?: Array<{ id: number }>;
+        };
+        const messageRecords = messagesBody.data || [];
+        if (messageRecords.length === 0) continue;
+
+        // Step 3: Get message content from chat service
+        const messageIdParams = messageRecords.map((m) => `id[]=${m.id}`).join('&');
+        const chatUrl = `${CHAT_BASE_URL}/api/2/user/${dialogue.alias}/messages?${messageIdParams}`;
+        const chatResponse = await fetch(chatUrl, {
+          headers: {
+            Authorization: `Bearer ${API_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!chatResponse.ok) {
+          console.warn(`Failed to fetch chat messages for dialogue ${dialogue.id}: ${chatResponse.status}`);
+          continue;
+        }
+
+        const chatBody = await chatResponse.json() as {
+          data?: Array<{
+            sender_type?: string;
+            text?: string;
+            created_at?: string;
+            is_hidden?: boolean;
+          }>;
+        };
+        const chatMessages = chatBody.data || [];
+
+        for (const msg of chatMessages) {
+          if (msg.is_hidden) continue;
+          allMessages.push({
+            role: msg.sender_type || 'unknown',
+            content: msg.text || '',
+            created_at: msg.created_at || '',
+          });
+        }
+      } catch (err) {
+        console.warn(`Failed to process dialogue ${dialogue.id}:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch dialogues:', err instanceof Error ? err.message : String(err));
+  }
+
+  return allMessages;
 }
 
 export async function fetchCaseTimelines(caseIds: number[]): Promise<Map<number, CaseTimeline>> {

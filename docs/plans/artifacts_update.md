@@ -38,16 +38,16 @@ This plan adds fetching and passing of both artifact types. Neither requires Gem
 
 ### Task 2: Fetch DIALOGUE artifacts and extract message content
 
-- [ ] In `case-api.ts`, add a `fetchCaseDialogues(artifactIds: string[]): Promise<DialogueMessage[]>` function that follows the existing two-step pattern:
+- [x] In `case-api.ts`, add a `fetchCaseDialogues(artifactIds: string[]): Promise<DialogueMessage[]>` function that follows the existing two-step pattern:
   - Step 1: `GET {TASKS_BASE_URL}/api/v3/dialogues?id={ids.join(',')}` — get dialogue records including alias
   - Step 2: For each dialogue, `GET {TASKS_BASE_URL}/api/v3/messages?dialogue_id={id}` — get message IDs
   - Step 3: For each dialogue, `GET {CHAT_BASE_URL}/api/2/user/{alias}/messages?id[]={id1}&id[]={id2}...` — get message content
   - Filter out hidden messages (`is_hidden: true`)
   - Return flat array of all messages across all dialogues with fields: `role` (sender_type or similar), `content` (text), `created_at`
   - On any individual failure: log warning, skip that dialogue — do not throw
-- [ ] Add env vars if not already present: `TASKS_BASE_URL`, `CHAT_BASE_URL`
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Add env vars if not already present: `TASKS_BASE_URL`, `CHAT_BASE_URL`
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 3: Add CASE_ACTION and DIALOGUE to pipeline and Planner context
 

@@ -1,5 +1,11 @@
 export type RiskLevel = 'green' | 'amber' | 'red';
 
+export interface DialogueMessage {
+  role: string;
+  content: string;
+  created_at: string;
+}
+
 export interface CaseAction {
   id: number;
   action_type: string;
