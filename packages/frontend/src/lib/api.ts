@@ -6,9 +6,11 @@ import type {
   FilteredCasesResponse,
   JobSummary,
   PipelineResult,
+  Dataset,
+  DatasetWithCases,
   DatasetCase,
   DatasetLabel,
-  SegmentInfo,
+  DatasetSourceType,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -25,7 +27,8 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
   });
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? `API error: ${response.status} ${response.statusText}`);
   }
 
   return response.json();
@@ -84,27 +87,31 @@ export const api = {
     }),
 
   // Dataset Builder API
-  getSegments: () =>
-    fetchApi<{ data: SegmentInfo[] }>('/api/dataset/segments'),
+  getDatasets: () =>
+    fetchApi<{ data: Dataset[] }>('/api/datasets'),
 
-  loadSegmentCases: (segment: string) =>
-    fetchApi<{ data: unknown[]; loaded: number; skipped: number }>(`/api/dataset/segments/${segment}/load`, {
+  createDataset: (name: string, description: string | null, sourceType: DatasetSourceType, sourceConfig: Record<string, unknown>) =>
+    fetchApi<Dataset>('/api/datasets', {
       method: 'POST',
+      body: JSON.stringify({ name, description, sourceType, sourceConfig }),
     }),
 
-  getDatasetCases: (segment?: string) => {
-    const params = segment ? `?segment=${segment}` : '';
-    return fetchApi<{ data: DatasetCase[] }>(`/api/dataset/cases${params}`);
-  },
+  getDataset: (id: number) =>
+    fetchApi<DatasetWithCases>(`/api/datasets/${id}`),
+
+  deleteDataset: (id: number) =>
+    fetchApi<{ success: boolean }>(`/api/datasets/${id}`, {
+      method: 'DELETE',
+    }),
 
   labelDatasetCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null) =>
-    fetchApi<DatasetCase>(`/api/dataset/cases/${id}/label`, {
+    fetchApi<DatasetCase>(`/api/datasets/cases/${id}/label`, {
       method: 'PATCH',
       body: JSON.stringify({ label, notes, labeledBy }),
     }),
 
   deleteDatasetCase: (id: number) =>
-    fetchApi<{ success: boolean }>(`/api/dataset/cases/${id}`, {
+    fetchApi<{ success: boolean }>(`/api/datasets/cases/${id}`, {
       method: 'DELETE',
     }),
 };

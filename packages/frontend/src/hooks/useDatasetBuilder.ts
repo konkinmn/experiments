@@ -1,42 +1,63 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { DatasetLabel } from '@/types';
+import type { DatasetLabel, DatasetSourceType } from '@/types';
 
-export function useSegments() {
+export function useDatasets() {
   return useQuery({
-    queryKey: ['dataset-segments'],
-    queryFn: () => api.getSegments(),
+    queryKey: ['datasets'],
+    queryFn: () => api.getDatasets(),
     select: (response) => response.data,
   });
 }
 
-export function useDatasetCases(segment?: string) {
-  return useQuery({
-    queryKey: ['dataset-cases', segment],
-    queryFn: () => api.getDatasetCases(segment),
-    select: (response) => response.data,
-  });
-}
-
-export function useLoadSegment() {
+export function useCreateDataset() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (segment: string) => api.loadSegmentCases(segment),
+    mutationFn: (params: {
+      name: string;
+      description: string | null;
+      sourceType: DatasetSourceType;
+      sourceConfig: Record<string, unknown>;
+    }) => api.createDataset(params.name, params.description, params.sourceType, params.sourceConfig),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dataset-cases'] });
-      queryClient.invalidateQueries({ queryKey: ['dataset-segments'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
     },
   });
 }
 
-export function useLabelCase() {
+export function useDeleteDataset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.deleteDataset(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+    },
+  });
+}
+
+export function useDataset(id: number, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['dataset', id],
+    queryFn: () => api.getDataset(id),
+    enabled: options?.enabled ?? true,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      // Keep polling only if cases are still pending (no run ID and no error)
+      const hasPending = data.cases?.some((c) => c.pipelineRunId === null && !c.pipelineError);
+      return hasPending ? 3000 : false;
+    },
+  });
+}
+
+export function useLabelDatasetCase() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, label, notes, labeledBy }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null }) =>
       api.labelDatasetCase(id, label, notes, labeledBy),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dataset-cases'] });
-      queryClient.invalidateQueries({ queryKey: ['dataset-segments'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
     },
   });
 }
@@ -46,8 +67,8 @@ export function useDeleteDatasetCase() {
   return useMutation({
     mutationFn: (id: number) => api.deleteDatasetCase(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dataset-cases'] });
-      queryClient.invalidateQueries({ queryKey: ['dataset-segments'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
     },
   });
 }
