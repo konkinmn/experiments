@@ -14,7 +14,7 @@ Extends the Dataset Builder with multi-run support. A dataset has cases with gro
 
 ### Task 1: DB migration — run tables
 
-- [ ] Create `init-db/006-dataset-runs.sql`:
+- [x] Create `init-db/006-dataset-runs.sql`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS dataset_runs (
@@ -41,8 +41,8 @@ CREATE INDEX idx_dataset_runs_dataset_id ON dataset_runs(dataset_id);
 CREATE INDEX idx_dataset_run_cases_run_id ON dataset_run_cases(run_id);
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 

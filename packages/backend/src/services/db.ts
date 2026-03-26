@@ -187,6 +187,49 @@ async function applyMigrations(): Promise<void> {
       );
     }
 
+    // Migration 008: dataset_runs and dataset_run_cases tables
+    const { rows: datasetRunsTableRows } = await pool.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_name = 'dataset_runs'`,
+    );
+    if (datasetRunsTableRows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS dataset_runs (
+          id SERIAL PRIMARY KEY,
+          dataset_id INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          config JSONB NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          completed_at TIMESTAMPTZ
+        )
+      `);
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_dataset_runs_dataset_id ON dataset_runs(dataset_id)`,
+      );
+    }
+
+    const { rows: runCasesTableRows } = await pool.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_name = 'dataset_run_cases'`,
+    );
+    if (runCasesTableRows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS dataset_run_cases (
+          id SERIAL PRIMARY KEY,
+          run_id INTEGER NOT NULL REFERENCES dataset_runs(id) ON DELETE CASCADE,
+          dataset_case_id INTEGER NOT NULL REFERENCES dataset_cases(id) ON DELETE CASCADE,
+          pipeline_run_id INTEGER REFERENCES dispute_pipeline_runs(id),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          UNIQUE(run_id, dataset_case_id)
+        )
+      `);
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_dataset_run_cases_run_id ON dataset_run_cases(run_id)`,
+      );
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
