@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { fetchCaseSignals } from './signals-query.js';
 import { fetchCaseDetails, fetchArtifactAsBase64 } from './case-api.js';
-import { analyzeWithLLM } from './llm-api.js';
+import { analyzeWithLLM, parseFileWithLLM } from './llm-api.js';
 import type { ContentPart } from './llm-api.js';
 import { getPromptById } from './prompts.js';
 import { insertPipelineRun } from './db.js';
@@ -15,6 +15,34 @@ import type {
 } from '../types/dispute-pipeline.js';
 
 const PROMPT_ID = 'dispute-planner-v1';
+
+const FILE_PARSER_SYSTEM_PROMPT = `Your task is to analyze an uploaded document, detect its type, and extract structured data.
+
+1. Detect Document Type
+
+Classify the document into one primary type:
+- Dispute form, invoice, receipt, bank statement, payment proof
+- Screenshot of a transaction or conversation
+- Other (specify)
+
+2. Extraction Rules
+
+For dispute forms:
+- Extract fraud type, dispute reason, crime reference, card status
+- Extract any merchant or transaction details mentioned
+
+For invoices/receipts/statements:
+- Extract counterparties, amounts, currencies, taxes
+- Extract dates (issue, due, payment)
+- Extract identifiers (invoice number, transaction ID, etc.)
+
+For screenshots/images:
+- Describe what is visible in the image
+- Extract any text, amounts, or transaction details shown
+
+Do not infer missing data. Only report what is explicitly present in the document.`;
+
+const FILE_PARSER_USER_PROMPT = 'Extract all relevant information from this file for a dispute case review.';
 
 // --- Layer 0: Signal fetch + dispute profile ---
 
@@ -281,15 +309,48 @@ async function callPlanner(
     }, null, 2),
   });
 
-  // LLM proxy does not yet support multimodal content for Anthropic.
-  // File parts are fetched and ready — send text-only for now.
+  // Separate file parts from text
+  const fileParts = contentParts.filter(p => p.type === 'file' || p.type === 'image_url');
   const textPart = contentParts.find((p): p is { type: 'text'; text: string } => p.type === 'text');
-  const userContent = textPart?.text ?? '';
 
-  const response = await analyzeWithLLM([
-    { role: 'system', content: prompt.content },
-    { role: 'user', content: userContent },
-  ]);
+  // Parse each file with Google Gemini (in parallel)
+  console.log(`[Planner] ${fileParts.length} file(s) to parse with Gemini`);
+  const parsedDescriptions: string[] = [];
+  if (fileParts.length > 0) {
+    const parseResults = await Promise.allSettled(
+      fileParts.map(part => parseFileWithLLM(FILE_PARSER_SYSTEM_PROMPT, FILE_PARSER_USER_PROMPT, part)),
+    );
+    for (const result of parseResults) {
+      if (result.status === 'fulfilled') {
+        parsedDescriptions.push(result.value);
+      } else {
+        console.warn('[Planner] File parse failed:', result.reason);
+        parsedDescriptions.push('[File could not be parsed]');
+      }
+    }
+    console.log('[Planner] Parsed file descriptions:', JSON.stringify(parsedDescriptions, null, 2));
+  }
+
+  // Build text-only payload with parsed file descriptions
+  const signalsPayload = JSON.parse(textPart?.text ?? '{}') as Record<string, unknown>;
+  if (parsedDescriptions.length > 0) {
+    signalsPayload.artifact_descriptions = parsedDescriptions;
+  }
+
+  const plannerMessages = [
+    { role: 'system' as const, content: prompt.content },
+    { role: 'user' as const, content: JSON.stringify(signalsPayload, null, 2) },
+  ];
+  console.log('[Planner] Full LLM request:', JSON.stringify({
+    messages: plannerMessages.map(m => ({
+      role: m.role,
+      content: m.role === 'user' ? m.content : `[system prompt, ${m.content.length} chars]`,
+    })),
+    provider: 'ANTHROPIC',
+    model: process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929',
+  }, null, 2));
+
+  const response = await analyzeWithLLM(plannerMessages);
 
   const rawResponse = response.content;
 

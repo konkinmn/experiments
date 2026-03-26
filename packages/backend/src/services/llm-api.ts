@@ -33,6 +33,9 @@ const LLM_API_BASE_URL = process.env.LLM_API_BASE_URL || '';
 const LLM_PROVIDER = process.env.LLM_PROVIDER || 'ANTHROPIC';
 const LLM_MODEL = process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929';
 
+const FILE_PARSE_PROVIDER = 'GOOGLE';
+const FILE_PARSE_MODEL = 'gemini-2.5-flash';
+
 interface ChatResponse {
   data?: {
     message?: string;
@@ -79,4 +82,63 @@ export async function analyzeWithLLM(messages: Message[]): Promise<LLMResponse> 
   return {
     content: data.data.message,
   };
+}
+
+export async function parseFileWithLLM(
+  systemPrompt: string,
+  userPrompt: string,
+  filePart: ContentPart,
+): Promise<string> {
+  if (!LLM_API_BASE_URL) {
+    throw new Error('LLM_API_BASE_URL is not configured');
+  }
+
+  const filePartSummary = filePart.type === 'file'
+    ? { type: filePart.type, filename: filePart.file.filename, data_length: filePart.file.file_data.length }
+    : filePart.type === 'image_url'
+      ? { type: filePart.type, url_length: filePart.image_url.url.length }
+      : { type: filePart.type };
+
+  console.log('[FileParser] Sending request to Gemini:', JSON.stringify({
+    provider: FILE_PARSE_PROVIDER,
+    model: FILE_PARSE_MODEL,
+    systemPrompt: `[${systemPrompt.length} chars]`,
+    userPrompt,
+    filePart: filePartSummary,
+  }));
+
+  const response = await fetch(`${LLM_API_BASE_URL}/api/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.API_TOKEN || ''}`,
+    },
+    body: JSON.stringify({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: [filePart, { type: 'text', text: userPrompt }] },
+      ],
+      provider: FILE_PARSE_PROVIDER,
+      model: FILE_PARSE_MODEL,
+      temperature: 0.2,
+      max_tokens: 4096,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`File parse LLM error: ${response.status} ${errorText}`);
+  }
+
+  const data = (await response.json()) as ChatResponse;
+
+  if (data.error && Object.keys(data.error).length > 0) {
+    throw new Error(`File parse LLM error: ${JSON.stringify(data.error)}`);
+  }
+
+  if (!data.data?.message) {
+    throw new Error('File parse LLM response missing message');
+  }
+
+  return data.data.message;
 }

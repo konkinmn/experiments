@@ -88,7 +88,7 @@ Receives the dispute profile + filtered case artifacts. Outputs one of three dec
 
 **Planner input includes:**
 - Dispute profile (rubric score, risk level, all account signals)
-- FILE artifacts (dispute form PDF and evidence screenshots — fetched from file-share → media service, passed as base64)
+- AI-extracted artifact descriptions (dispute form PDF and evidence screenshots — fetched, pre-parsed with Google Gemini, text summaries passed to Planner)
 - Selected raw signals (tx_count_90d, active_months, prior_payments_to_merchant, railsr_disputes_30d)
 
 **Allowed artifact types passed to Planner:**
@@ -96,7 +96,7 @@ Receives the dispute profile + filtered case artifacts. Outputs one of three dec
 
 All other artifact types (`DIALOGUE`, `AGENT_TASK`, `TRANSACTION`, `CASE_ACTION`, `CALL`) are stripped before the Planner sees the case.
 
-**File fetch flow:**
+**File fetch and parse flow:**
 ```
 artifact.artifact_id
         ↓
@@ -106,10 +106,14 @@ response.data.path
         ↓
 GET https://media.k1.anna.money{path}
         ↓
-raw bytes → base64 → passed to LLM proxy
+raw bytes → base64
+        ↓
+Pre-parse with Google Gemini (gemini-2.5-flash) via LLM proxy
+        ↓
+text description → included in Planner payload as artifact_descriptions
 ```
 
-PDFs use `{ type: "file", file: { filename, file_data: "data:application/pdf;base64,..." } }`. Images use `{ type: "image_url", image_url: { url: "data:{mimeType};base64,..." } }`.
+The LLM proxy does not support multimodal content for the Anthropic provider. Following the anna-gemma pattern, files are pre-parsed with Google Gemini into structured text descriptions, which are then included in the Planner's text payload. This two-step approach keeps file understanding (Gemini) separate from dispute reasoning (Claude).
 
 **Planner output schema:**
 

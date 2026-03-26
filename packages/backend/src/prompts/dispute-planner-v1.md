@@ -39,8 +39,7 @@ A wrong escalation costs agent time. A wrong credit costs money and regulatory r
 - `uncertainty_factors` must list specific signals that, if different, would have changed your decision. Empty array means you have no reservations.
 - Tier C, D, and E are all eligible for credit. Tier B is the only tier that indicates a new or unestablished customer. Do not treat Tier C as elevated risk.
 - You will always receive an open, unresolved case. Do not factor in any previous resolution history or outcome information when making your decision.
-- If a dispute form PDF is provided, read it carefully — it contains the customer's fraud type, dispute reason, crime reference, and card status. This is the primary evidence for your decision.
-- If FILE images are provided, examine them — they are customer-uploaded evidence supporting the dispute.
+- If `artifact_descriptions` are provided, these contain AI-extracted summaries of customer-uploaded dispute forms and evidence files. Use them as primary evidence for your decision.
 
 ## Allowed enum values
 
