@@ -6,6 +6,9 @@ import type {
   FilteredCasesResponse,
   JobSummary,
   PipelineResult,
+  DatasetCase,
+  DatasetLabel,
+  SegmentInfo,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -77,6 +80,31 @@ export const api = {
 
   deletePipelineResult: (id: number) =>
     fetchApi<{ success: boolean }>(`/api/dispute-pipeline/results/${id}`, {
+      method: 'DELETE',
+    }),
+
+  // Dataset Builder API
+  getSegments: () =>
+    fetchApi<{ data: SegmentInfo[] }>('/api/dataset/segments'),
+
+  loadSegmentCases: (segment: string) =>
+    fetchApi<{ data: unknown[]; loaded: number; skipped: number }>(`/api/dataset/segments/${segment}/load`, {
+      method: 'POST',
+    }),
+
+  getDatasetCases: (segment?: string) => {
+    const params = segment ? `?segment=${segment}` : '';
+    return fetchApi<{ data: DatasetCase[] }>(`/api/dataset/cases${params}`);
+  },
+
+  labelDatasetCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null) =>
+    fetchApi<DatasetCase>(`/api/dataset/cases/${id}/label`, {
+      method: 'PATCH',
+      body: JSON.stringify({ label, notes, labeledBy }),
+    }),
+
+  deleteDatasetCase: (id: number) =>
+    fetchApi<{ success: boolean }>(`/api/dataset/cases/${id}`, {
       method: 'DELETE',
     }),
 };

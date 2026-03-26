@@ -176,9 +176,9 @@ interface SegmentInfo {
 
 ### Task 5: Frontend — Dataset Builder page
 
-- [ ] Create `packages/frontend/src/pages/DatasetBuilder.tsx`
-- [ ] Register route `/dataset` in `App.tsx`
-- [ ] Add sidebar link "Dataset Builder" in `Sidebar.tsx`
+- [x] Create `packages/frontend/src/pages/DatasetBuilder.tsx`
+- [x] Register route `/dataset` in `App.tsx`
+- [x] Add sidebar link "Dataset Builder" in `Sidebar.tsx`
 
 **Page layout:**
 
@@ -198,8 +198,8 @@ Session summary bar: Total cases / Labeled / Credit / Escalate / Needs more info
 
 Export button: XLSX with case_id, segment, pipeline decision, label, notes, rubric score, key signals.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
