@@ -49,7 +49,7 @@ This fixes `tx_count_90_days`, `active_months`, and `prior_payments_to_merchant`
 
 ### Task 3: Fix dispute history windows
 
-- [ ] In `signals-query.ts`, update the `dispute_history` CTE for both windows:
+- [x] In `signals-query.ts`, update the `dispute_history` CTE for both windows:
 
 ```sql
 -- 6 month window (before)
@@ -67,8 +67,8 @@ AND created_at >= TIMESTAMP_SUB(cd.case_created_at, INTERVAL 30 DAY)
 AND created_at < cd.case_created_at
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 4: Fix scammer and scam victim upper bound
 

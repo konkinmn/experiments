@@ -84,12 +84,12 @@ transaction_activity AS (
 dispute_history AS (
   SELECT
     COUNT(*) AS railsr_disputes_last_6_months,
-    COUNTIF(t.created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)) AS railsr_disputes_last_30_days
+    COUNTIF(t.created_at >= TIMESTAMP_SUB((SELECT case_created_at FROM case_data), INTERVAL 30 DAY)) AS railsr_disputes_last_30_days
   FROM \`anna-money.export.task_manager_agent_tasks\` t
   WHERE
     t.alias = (SELECT alias FROM case_data)
     AND t.task_type = 'DISPUTE'
-    AND t.created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 180 DAY)
+    AND t.created_at >= TIMESTAMP_SUB((SELECT case_created_at FROM case_data), INTERVAL 6 MONTH)
     AND t.created_at < (SELECT case_created_at FROM case_data)
 )
 SELECT
