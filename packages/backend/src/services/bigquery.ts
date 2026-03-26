@@ -20,11 +20,18 @@ export class BigQueryService {
     });
   }
 
-  async query<T = Record<string, unknown>>(sql: string, params?: Record<string, unknown>): Promise<T[]> {
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    params?: Record<string, unknown>,
+    jobOptions?: { maximumBytesBilled?: string },
+  ): Promise<T[]> {
     const [rows] = await this.client.query({
       query: sql,
       params,
       location: this.location,
+      ...(jobOptions?.maximumBytesBilled
+        ? { maximumBytesBilled: jobOptions.maximumBytesBilled }
+        : {}),
     });
     return rows as T[];
   }

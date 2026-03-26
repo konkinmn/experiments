@@ -45,7 +45,7 @@ No test framework is configured.
   - `signals-query.ts` — Signal-fetching SQL queries
   - `llm-api.ts` — LLM proxy integration (Anthropic/OpenAI/Gemini)
   - `db.ts` — PostgreSQL connection pool, CRUD operations, auto-migrations
-  - `dataset-segments.ts` — Preset BigQuery segment queries and custom SQL execution for dataset building
+  - `dataset-segments.ts` — Custom SQL execution for dataset building (BigQuery)
   - `prompts.ts` — Loads prompt templates from `src/prompts/*.md`
 - `src/prompts/` — Markdown prompt files for LLM calls
 - `src/types/` — Zod schemas and TypeScript types

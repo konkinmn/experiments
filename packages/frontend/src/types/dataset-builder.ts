@@ -1,7 +1,7 @@
 import type { PipelineResult } from './rubric-tester';
 
 export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
-export type DatasetSourceType = 'preset' | 'case_ids' | 'custom_sql';
+export type DatasetSourceType = 'case_ids' | 'custom_sql';
 
 export interface Dataset {
   id: number;
@@ -23,16 +23,11 @@ export interface DatasetCase {
   datasetId: number;
   caseId: number;
   pipelineRunId: number | null;
+  pipelineError: string | null;
   pipelineRun: PipelineResult | null;
   label: DatasetLabel | null;
   labelNotes: string | null;
   labeledBy: string | null;
   labeledAt: string | null;
   createdAt: string;
-}
-
-export interface PresetInfo {
-  key: string;
-  label: string;
-  description: string;
 }

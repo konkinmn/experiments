@@ -10,14 +10,6 @@ export function useDatasets() {
   });
 }
 
-export function useDatasetPresets() {
-  return useQuery({
-    queryKey: ['dataset-presets'],
-    queryFn: () => api.getDatasetPresets(),
-    select: (response) => response.data,
-  });
-}
-
 export function useCreateDataset() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -51,8 +43,9 @@ export function useDataset(id: number, options?: { enabled?: boolean }) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;
-      const hasLoading = data.cases?.some((c) => c.pipelineRunId === null);
-      return hasLoading ? 3000 : false;
+      // Keep polling only if cases are still pending (no run ID and no error)
+      const hasPending = data.cases?.some((c) => c.pipelineRunId === null && !c.pipelineError);
+      return hasPending ? 3000 : false;
     },
   });
 }

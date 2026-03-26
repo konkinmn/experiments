@@ -178,13 +178,7 @@ export function formatPipelineRun(row: PipelineRunRow) {
 // --- Dataset Builder types ---
 
 export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
-export type DatasetSourceType = 'preset' | 'case_ids' | 'custom_sql';
-
-export interface PresetInfo {
-  key: string;
-  label: string;
-  description: string;
-}
+export type DatasetSourceType = 'case_ids' | 'custom_sql';
 
 export interface DatasetRow {
   id: number;
@@ -205,6 +199,7 @@ export interface DatasetCaseRow {
   dataset_id: number;
   case_id: number;
   pipeline_run_id: number | null;
+  pipeline_error: string | null;
   label: DatasetLabel | null;
   label_notes: string | null;
   labeled_by: string | null;

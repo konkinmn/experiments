@@ -114,6 +114,11 @@ export function DatasetDetail() {
               {dataset.description && (
                 <p className="text-sm text-gray-500">{dataset.description}</p>
               )}
+              {dataset.sourceType === 'custom_sql' && typeof dataset.sourceConfig.sql === 'string' && (
+                <pre className="mt-2 text-xs text-gray-500 bg-gray-100 rounded px-3 py-2 overflow-x-auto max-w-2xl whitespace-pre-wrap font-mono">
+                  {dataset.sourceConfig.sql}
+                </pre>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">

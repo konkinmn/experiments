@@ -1,17 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { getPresets, runPresetQuery, runCustomSql } from '../services/dataset-segments.js';
+import { runCustomSql } from '../services/dataset-segments.js';
 import { runDisputePipeline } from '../services/dispute-pipeline.js';
 import {
-  insertDataset,
+  insertDatasetWithCases,
   listDatasets,
   getDataset,
   deleteDataset,
-  insertDatasetCases,
   listDatasetCases,
   updateDatasetCaseLabel,
   updateDatasetCasePipelineRun,
+  updateDatasetCasePipelineError,
   deleteDatasetCase,
+  datasetCaseExists,
   getPipelineRunsByIds,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
@@ -20,7 +21,7 @@ import type { PipelineRunRow, DatasetCaseRow, DatasetRow } from '../types/disput
 const CreateDatasetSchema = z.object({
   name: z.string().min(1),
   description: z.string().nullable().optional(),
-  sourceType: z.enum(['preset', 'case_ids', 'custom_sql']),
+  sourceType: z.enum(['case_ids', 'custom_sql']),
   sourceConfig: z.record(z.unknown()),
 });
 
@@ -49,6 +50,7 @@ function formatDatasetCase(row: DatasetCaseRow, pipelineRun: PipelineRunRow | nu
     datasetId: row.dataset_id,
     caseId: row.case_id,
     pipelineRunId: row.pipeline_run_id,
+    pipelineError: row.pipeline_error,
     pipelineRun: pipelineRun ? formatPipelineRun(pipelineRun) : null,
     label: row.label,
     labelNotes: row.label_notes,
@@ -81,11 +83,6 @@ async function runWithConcurrency<T>(
 }
 
 export async function datasetRoutes(app: FastifyInstance) {
-  // GET /presets — List available preset segment definitions
-  app.get('/presets', async () => {
-    return { data: getPresets() };
-  });
-
   // GET / — List all datasets with labeled/total counts
   app.get('/', async () => {
     const datasets = await listDatasets();
@@ -102,16 +99,13 @@ export async function datasetRoutes(app: FastifyInstance) {
       // Resolve case IDs based on source type
       let caseIds: number[];
       try {
-        if (body.sourceType === 'preset') {
-          const presetKey = body.sourceConfig.preset_key;
-          if (typeof presetKey !== 'string') {
-            return reply.status(400).send({ error: 'source_config.preset_key must be a string' });
-          }
-          caseIds = await runPresetQuery(presetKey);
-        } else if (body.sourceType === 'case_ids') {
+        if (body.sourceType === 'case_ids') {
           const ids = body.sourceConfig.ids;
           if (!Array.isArray(ids)) {
             return reply.status(400).send({ error: 'source_config.ids must be an array' });
+          }
+          if (ids.length > 500) {
+            return reply.status(400).send({ error: 'Maximum 500 case IDs allowed' });
           }
           caseIds = ids.map((id) => {
             const n = Number(id);
@@ -139,27 +133,32 @@ export async function datasetRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'No case IDs resolved from source' });
       }
 
-      // Insert dataset row
-      const dataset = await insertDataset(
+      // Insert dataset + cases in a single transaction
+      const { dataset, cases: datasetCases } = await insertDatasetWithCases(
         body.name,
         body.description ?? null,
         body.sourceType,
         body.sourceConfig,
+        caseIds,
       );
-
-      // Insert dataset_cases rows
-      const datasetCases = await insertDatasetCases(dataset.id, caseIds);
 
       // Run pipelines in background with concurrency limit of 3
       const tasks = datasetCases.map((dc) => async () => {
         try {
+          // Skip if dataset case was deleted while queued
+          const exists = await datasetCaseExists(dc.id);
+          if (!exists) return;
+
           const pipelineRun = await runDisputePipeline(dc.case_id);
           await updateDatasetCasePipelineRun(dc.id, pipelineRun.id);
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
           app.log.error(
             { caseId: dc.case_id, datasetId: dataset.id, error },
             'Pipeline run failed for dataset case',
           );
+          // Mark the case as failed so frontend stops polling
+          await updateDatasetCasePipelineError(dc.id, message).catch(() => {});
         }
       });
 

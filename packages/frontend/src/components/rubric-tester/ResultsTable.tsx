@@ -5,6 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { PipelineResult, RiskLevel, CaseSignalsRaw, DatasetCase, DatasetLabel } from '@/types';
 
+const WS_CASE_URL = (alias: string, caseId: number) =>
+  `https://chat-workstation.k1.anna.money/${alias}/tasks/cases?caseId=${caseId}`;
+
 interface ResultsTableProps {
   results: PipelineResult[];
   onDelete?: (id: number) => void;
@@ -144,17 +147,25 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
       <div className="space-y-4">
         {cases.map((dc) => {
           if (!dc.pipelineRun) {
+            const isFailed = !!dc.pipelineError;
             return (
-              <div key={dc.id} className="rounded-lg border border-gray-200 bg-white">
+              <div key={dc.id} className={`rounded-lg border bg-white ${isFailed ? 'border-red-200' : 'border-gray-200'}`}>
                 <div className="flex items-center gap-8 px-5 py-4">
                   <div className="min-w-0">
                     <span className="text-xs text-muted-foreground">Case</span>
                     <p className="font-mono text-lg font-bold">{dc.caseId}</p>
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Running pipeline...
-                  </div>
+                  {isFailed ? (
+                    <div className="flex items-center gap-2 text-sm text-red-600">
+                      <AlertTriangle className="h-4 w-4" />
+                      Pipeline failed
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Running pipeline...
+                    </div>
+                  )}
                   {onDeleteCase && (
                     <div className="ml-auto">
                       <button
@@ -167,11 +178,15 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
                   )}
                 </div>
                 <div className="border-t px-5 py-4">
-                  <div className="space-y-3 animate-pulse">
-                    <div className="h-4 bg-gray-200 rounded w-3/4" />
-                    <div className="h-4 bg-gray-200 rounded w-1/2" />
-                    <div className="h-20 bg-gray-200 rounded" />
-                  </div>
+                  {isFailed ? (
+                    <p className="text-sm text-red-600">{dc.pipelineError}</p>
+                  ) : (
+                    <div className="space-y-3 animate-pulse">
+                      <div className="h-4 bg-gray-200 rounded w-3/4" />
+                      <div className="h-4 bg-gray-200 rounded w-1/2" />
+                      <div className="h-20 bg-gray-200 rounded" />
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -189,7 +204,9 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
               <div className="flex items-center gap-8 px-5 py-4">
                 <div className="min-w-0">
                   <span className="text-xs text-muted-foreground">Case</span>
-                  <p className="font-mono text-lg font-bold">{dc.caseId}</p>
+                  <p className="font-mono text-lg font-bold">
+                    <a href={WS_CASE_URL(r.rawSignals.alias, dc.caseId)} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 hover:underline">{dc.caseId}</a>
+                  </p>
                 </div>
                 <div>
                   <span className="text-xs text-muted-foreground">Risk</span>
@@ -267,7 +284,9 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
             <div className="flex items-center gap-8 px-5 py-4">
               <div className="min-w-0">
                 <span className="text-xs text-muted-foreground">Case</span>
-                <p className="font-mono text-lg font-bold">{r.caseId}</p>
+                <p className="font-mono text-lg font-bold">
+                  <a href={WS_CASE_URL(r.rawSignals.alias, r.caseId)} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 hover:underline">{r.caseId}</a>
+                </p>
               </div>
               <div>
                 <span className="text-xs text-muted-foreground">Risk</span>

@@ -11,7 +11,6 @@ import type {
   DatasetCase,
   DatasetLabel,
   DatasetSourceType,
-  PresetInfo,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -90,9 +89,6 @@ export const api = {
   // Dataset Builder API
   getDatasets: () =>
     fetchApi<{ data: Dataset[] }>('/api/datasets'),
-
-  getDatasetPresets: () =>
-    fetchApi<{ data: PresetInfo[] }>('/api/datasets/presets'),
 
   createDataset: (name: string, description: string | null, sourceType: DatasetSourceType, sourceConfig: Record<string, unknown>) =>
     fetchApi<Dataset>('/api/datasets', {

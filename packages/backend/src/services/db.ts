@@ -116,7 +116,7 @@ async function applyMigrations(): Promise<void> {
           id SERIAL PRIMARY KEY,
           name TEXT NOT NULL,
           description TEXT,
-          source_type TEXT NOT NULL CHECK (source_type IN ('preset', 'case_ids', 'custom_sql')),
+          source_type TEXT NOT NULL CHECK (source_type IN ('case_ids', 'custom_sql')),
           source_config JSONB NOT NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -175,6 +175,18 @@ async function applyMigrations(): Promise<void> {
       `);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_dataset_cases_dataset_id ON dataset_cases(dataset_id)`);
     }
+
+    // Migration: add pipeline_error column to dataset_cases
+    const { rows: pipelineErrorCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_cases' AND column_name = 'pipeline_error'`,
+    );
+    if (pipelineErrorCol.length === 0) {
+      await pool.query(
+        `ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS pipeline_error TEXT DEFAULT NULL`,
+      );
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -371,6 +383,63 @@ export async function insertDataset(
   return rows[0];
 }
 
+/**
+ * Insert dataset and its cases in a single transaction.
+ * If case insertion fails, the dataset row is also rolled back.
+ */
+export async function insertDatasetWithCases(
+  name: string,
+  description: string | null,
+  sourceType: DatasetSourceType,
+  sourceConfig: Record<string, unknown>,
+  caseIds: number[],
+): Promise<{ dataset: DatasetRow; cases: DatasetCaseRow[] }> {
+  await ensureMigrations();
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: datasetRows } = await client.query<DatasetRow>(
+      `INSERT INTO datasets (name, description, source_type, source_config)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [name, description, sourceType, JSON.stringify(sourceConfig)],
+    );
+    if (!datasetRows[0]) throw new Error('Insert did not return a row');
+    const dataset = datasetRows[0];
+
+    const allCaseRows: DatasetCaseRow[] = [];
+    const BATCH_SIZE = 500;
+    for (let start = 0; start < caseIds.length; start += BATCH_SIZE) {
+      const batch = caseIds.slice(start, start + BATCH_SIZE);
+      const values: unknown[] = [];
+      const placeholders: string[] = [];
+      let idx = 1;
+      for (const caseId of batch) {
+        placeholders.push(`($${idx++}, $${idx++})`);
+        values.push(dataset.id, caseId);
+      }
+      const { rows } = await client.query<DatasetCaseRow>(
+        `INSERT INTO dataset_cases (dataset_id, case_id)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (dataset_id, case_id) DO NOTHING
+         RETURNING *`,
+        values,
+      );
+      allCaseRows.push(...rows);
+    }
+
+    await client.query('COMMIT');
+    return { dataset, cases: allCaseRows };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function listDatasets(): Promise<DatasetWithCounts[]> {
   await ensureMigrations();
   const pool = getPool();
@@ -416,21 +485,28 @@ export async function insertDatasetCases(
   if (caseIds.length === 0) return [];
   await ensureMigrations();
   const pool = getPool();
-  const values: unknown[] = [];
-  const placeholders: string[] = [];
-  let idx = 1;
-  for (const caseId of caseIds) {
-    placeholders.push(`($${idx++}, $${idx++})`);
-    values.push(datasetId, caseId);
+  // Batch in groups of 500 to stay well within PostgreSQL's bind-parameter limit
+  const BATCH_SIZE = 500;
+  const allRows: DatasetCaseRow[] = [];
+  for (let start = 0; start < caseIds.length; start += BATCH_SIZE) {
+    const batch = caseIds.slice(start, start + BATCH_SIZE);
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+    let idx = 1;
+    for (const caseId of batch) {
+      placeholders.push(`($${idx++}, $${idx++})`);
+      values.push(datasetId, caseId);
+    }
+    const { rows } = await pool.query<DatasetCaseRow>(
+      `INSERT INTO dataset_cases (dataset_id, case_id)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (dataset_id, case_id) DO NOTHING
+       RETURNING *`,
+      values,
+    );
+    allRows.push(...rows);
   }
-  const { rows } = await pool.query<DatasetCaseRow>(
-    `INSERT INTO dataset_cases (dataset_id, case_id)
-     VALUES ${placeholders.join(', ')}
-     ON CONFLICT (dataset_id, case_id) DO NOTHING
-     RETURNING *`,
-    values,
-  );
-  return rows;
+  return allRows;
 }
 
 export async function listDatasetCases(datasetId: number): Promise<DatasetCaseRow[]> {
@@ -471,6 +547,28 @@ export async function updateDatasetCasePipelineRun(
     `UPDATE dataset_cases SET pipeline_run_id = $1 WHERE id = $2`,
     [pipelineRunId, id],
   );
+}
+
+export async function updateDatasetCasePipelineError(
+  id: number,
+  error: string,
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE dataset_cases SET pipeline_error = $1 WHERE id = $2`,
+    [error, id],
+  );
+}
+
+export async function datasetCaseExists(id: number): Promise<boolean> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT 1 FROM dataset_cases WHERE id = $1`,
+    [id],
+  );
+  return rows.length > 0;
 }
 
 export async function deleteDatasetCase(id: number): Promise<number> {

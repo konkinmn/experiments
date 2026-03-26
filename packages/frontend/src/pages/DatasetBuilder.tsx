@@ -4,7 +4,6 @@ import { Database, Plus, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -13,17 +12,15 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { useDatasets, useCreateDataset, useDeleteDataset, useDatasetPresets } from '@/hooks/useDatasetBuilder';
-import type { Dataset, DatasetSourceType, PresetInfo } from '@/types';
+import { useDatasets, useCreateDataset, useDeleteDataset } from '@/hooks/useDatasetBuilder';
+import type { Dataset, DatasetSourceType } from '@/types';
 
 const SOURCE_TYPE_LABELS: Record<DatasetSourceType, string> = {
-  preset: 'Preset',
   case_ids: 'Case IDs',
   custom_sql: 'Custom SQL',
 };
 
-const SOURCE_TYPE_VARIANT: Record<DatasetSourceType, 'blue' | 'green' | 'amber'> = {
-  preset: 'blue',
+const SOURCE_TYPE_VARIANT: Record<DatasetSourceType, 'green' | 'amber'> = {
   case_ids: 'green',
   custom_sql: 'amber',
 };
@@ -198,27 +195,22 @@ function NewDatasetModal({
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [sourceType, setSourceType] = useState<DatasetSourceType>('preset');
-  const [presetKey, setPresetKey] = useState('');
+  const [sourceType, setSourceType] = useState<DatasetSourceType>('custom_sql');
   const [caseIdsText, setCaseIdsText] = useState('');
   const [customSql, setCustomSql] = useState('');
-  const { data: presets = [] } = useDatasetPresets();
   const createDataset = useCreateDataset();
 
   const resetForm = () => {
     setName('');
     setDescription('');
-    setSourceType('preset');
-    setPresetKey('');
+    setSourceType('custom_sql');
     setCaseIdsText('');
     setCustomSql('');
   };
 
   const handleCreate = () => {
     let sourceConfig: Record<string, unknown>;
-    if (sourceType === 'preset') {
-      sourceConfig = { preset_key: presetKey };
-    } else if (sourceType === 'case_ids') {
+    if (sourceType === 'case_ids') {
       const ids = caseIdsText
         .split(/[\n,]+/)
         .map((s) => s.trim())
@@ -243,8 +235,7 @@ function NewDatasetModal({
 
   const isValid =
     name.trim().length > 0 &&
-    ((sourceType === 'preset' && presetKey.length > 0) ||
-      (sourceType === 'case_ids' && caseIdsText.trim().length > 0) ||
+    ((sourceType === 'case_ids' && caseIdsText.trim().length > 0) ||
       (sourceType === 'custom_sql' && customSql.trim().length > 0));
 
   return (
@@ -290,7 +281,7 @@ function NewDatasetModal({
           <div>
             <label className="text-sm font-medium text-gray-700 mb-2 block">Source</label>
             <div className="flex gap-2">
-              {(['preset', 'case_ids', 'custom_sql'] as const).map((type) => (
+              {(['case_ids', 'custom_sql'] as const).map((type) => (
                 <button
                   key={type}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${
@@ -307,10 +298,6 @@ function NewDatasetModal({
           </div>
 
           {/* Source Config */}
-          {sourceType === 'preset' && (
-            <PresetSelector presets={presets} value={presetKey} onChange={setPresetKey} />
-          )}
-
           {sourceType === 'case_ids' && (
             <div>
               <label className="text-sm font-medium text-gray-700 mb-1 block">Case IDs</label>
@@ -361,34 +348,5 @@ function NewDatasetModal({
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-function PresetSelector({
-  presets,
-  value,
-  onChange,
-}: {
-  presets: PresetInfo[];
-  value: string;
-  onChange: (key: string) => void;
-}) {
-  const selected = presets.find((p) => p.key === value);
-
-  return (
-    <div>
-      <label className="text-sm font-medium text-gray-700 mb-1 block">Preset segment</label>
-      <Select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Select a preset...</option>
-        {presets.map((preset) => (
-          <option key={preset.key} value={preset.key}>
-            {preset.label}
-          </option>
-        ))}
-      </Select>
-      {selected && (
-        <p className="text-xs text-muted-foreground mt-1">{selected.description}</p>
-      )}
-    </div>
   );
 }
