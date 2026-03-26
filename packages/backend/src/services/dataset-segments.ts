@@ -1,4 +1,5 @@
 import { getBigQueryService } from './bigquery.js';
+import { fetchCaseActions } from './case-api.js';
 
 export interface SegmentDefinition {
   key: string;
@@ -60,13 +61,22 @@ LIMIT 30`,
   hard_gate: `
 SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
-LEFT JOIN \`anna-money.expiring_tables.cifas_matches\` cf ON cf.alias = c.alias
-LEFT JOIN \`anna-money.export.task_manager_agent_tasks\` scam
-  ON scam.alias = c.alias AND scam.group_id = 'd33eb1ad-5190-44d0-9ff5-af7119b3cd19'
 WHERE c.issue_type_id = 'dispute'
   AND c.status = 'RESOLVED'
   AND c.created_at >= TIMESTAMP('2026-01-01')
-  AND (cf.id IS NOT NULL OR scam.id IS NOT NULL)
+  AND (
+    EXISTS (
+      SELECT 1
+      FROM \`anna-money.expiring_tables.cifas_matches\` cf
+      WHERE cf.alias = c.alias
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM \`anna-money.export.task_manager_agent_tasks\` scam
+      WHERE scam.alias = c.alias
+        AND scam.group_id = 'd33eb1ad-5190-44d0-9ff5-af7119b3cd19'
+    )
+  )
 GROUP BY c.id
 ORDER BY MAX(c.created_at) DESC
 LIMIT 20`,
@@ -74,15 +84,11 @@ LIMIT 20`,
   missing_evidence: `
 SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
-JOIN \`anna-money.export.workstation_case_actions\` ca ON ca.case_id = c.id
 WHERE c.issue_type_id = 'dispute'
   AND c.status = 'RESOLVED'
-  AND ca.action_type = 'DISPUTE_FORM_FILLED'
-  AND JSON_EXTRACT_SCALAR(ca.metadata, '$.crime_ref_number') IS NULL
   AND c.created_at >= TIMESTAMP('2026-01-01')
-GROUP BY c.id
-ORDER BY MAX(c.created_at) DESC
-LIMIT 20`,
+ORDER BY c.created_at DESC
+LIMIT 200`,
 
   out_of_scope: `
 SELECT c.id AS case_id
@@ -121,7 +127,45 @@ ORDER BY c.created_at DESC
 LIMIT 30`,
 };
 
+async function runWithConcurrency<T>(
+  items: readonly number[],
+  limit: number,
+  worker: (item: number) => Promise<T>,
+): Promise<T[]> {
+  const results: T[] = [];
+  let index = 0;
+
+  async function next() {
+    while (index < items.length) {
+      const current = index++;
+      results[current] = await worker(items[current]!);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => next()));
+  return results;
+}
+
+async function fetchMissingEvidenceCaseIds(): Promise<number[]> {
+  const bq = getBigQueryService();
+  const rows = await bq.query<{ case_id: number }>(SEGMENT_QUERIES.missing_evidence);
+  const candidateCaseIds = rows.map((r) => r.case_id);
+
+  const matches = await runWithConcurrency(candidateCaseIds, 10, async (caseId) => {
+    const actions = await fetchCaseActions(caseId);
+    const disputeFormAction = actions.find((action) => action.action_type === 'DISPUTE_FORM_FILLED');
+    const crimeRefNumber = disputeFormAction?.metadata?.crime_ref_number?.trim();
+    return disputeFormAction && !crimeRefNumber ? caseId : null;
+  });
+
+  return matches.filter((caseId): caseId is number => caseId !== null).slice(0, 20);
+}
+
 export async function fetchSegmentCaseIds(segment: string): Promise<number[]> {
+  if (segment === 'missing_evidence') {
+    return fetchMissingEvidenceCaseIds();
+  }
+
   const query = SEGMENT_QUERIES[segment];
   if (!query) {
     throw new Error(`Unknown segment: ${segment}`);
