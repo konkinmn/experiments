@@ -284,6 +284,16 @@ export async function updatePipelineReview(
   return rows[0] ?? null;
 }
 
+export async function getPipelineRunsByIds(ids: number[]): Promise<PipelineRunRow[]> {
+  if (ids.length === 0) return [];
+  const pool = getPool();
+  const { rows } = await pool.query<PipelineRunRow>(
+    'SELECT * FROM dispute_pipeline_runs WHERE id = ANY($1)',
+    [ids],
+  );
+  return rows;
+}
+
 export async function deletePipelineRun(id: number): Promise<number> {
   const pool = getPool();
   const result = await pool.query('DELETE FROM dispute_pipeline_runs WHERE id = $1', [id]);

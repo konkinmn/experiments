@@ -9,7 +9,7 @@ import {
   deleteDatasetCase,
   getDatasetSegmentCounts,
   getExistingDatasetCaseIds,
-  listPipelineRuns,
+  getPipelineRunsByIds,
 } from '../services/db.js';
 import type { PipelineRunRow, DatasetCaseRow } from '../types/dispute-pipeline.js';
 
@@ -158,8 +158,9 @@ export async function datasetRoutes(app: FastifyInstance) {
     const segment = request.query.segment || undefined;
     const cases = await listDatasetCases(segment);
 
-    // Fetch pipeline runs for joining
-    const pipelineRuns = await listPipelineRuns();
+    // Fetch only the pipeline runs referenced by these dataset cases
+    const runIds = cases.map((c) => c.pipeline_run_id).filter((id): id is number => id !== null);
+    const pipelineRuns = await getPipelineRunsByIds(runIds);
     const runMap = new Map(pipelineRuns.map((r) => [r.id, r]));
 
     const data = cases.map((c) => {
