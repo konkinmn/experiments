@@ -236,7 +236,7 @@ Agreement  Credit precision  Escalate recall   Cases
 
 ### Task 7: Frontend — new run modal
 
-- [ ] Create `NewRunModal` component
+- [x] Create `NewRunModal` component
 
 **Fields:**
 - Run name (text input, e.g. "Sonnet v2 test")
@@ -252,8 +252,8 @@ Agreement  Credit precision  Escalate recall   Cases
 
 On submit: `POST /api/datasets/:id/runs` with full config. Modal closes, new tab appears with loading state.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 

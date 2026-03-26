@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResultsTable } from '@/components/rubric-tester';
+import { NewRunModal } from '@/components/dataset-builder';
 import {
   useDataset,
   useLabelDatasetCase,
@@ -213,16 +214,11 @@ export function DatasetDetail() {
         />
       ) : null}
 
-      {/* NewRunModal placeholder — will be implemented in Task 7 */}
-      {showNewRunModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h2 className="text-lg font-semibold mb-4">New Run</h2>
-            <p className="text-sm text-muted-foreground mb-4">Run configuration modal coming soon.</p>
-            <Button variant="outline" onClick={() => setShowNewRunModal(false)}>Close</Button>
-          </div>
-        </div>
-      )}
+      <NewRunModal
+        open={showNewRunModal}
+        onOpenChange={setShowNewRunModal}
+        datasetId={datasetId}
+      />
     </div>
   );
 }
