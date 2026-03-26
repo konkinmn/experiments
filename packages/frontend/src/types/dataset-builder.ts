@@ -69,6 +69,7 @@ export interface DatasetRunCase {
   caseId: number;
   label: DatasetLabel | null;
   pipelineRunId: number | null;
+  pipelineError: string | null;
   pipelineRun: PipelineResult | null;
   agreement: boolean | null;
 }

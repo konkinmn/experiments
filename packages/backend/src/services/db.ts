@@ -230,6 +230,17 @@ async function applyMigrations(): Promise<void> {
       );
     }
 
+    // Migration: add pipeline_error column to dataset_run_cases
+    const { rows: runCaseErrorCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_run_cases' AND column_name = 'pipeline_error'`,
+    );
+    if (runCaseErrorCol.length === 0) {
+      await pool.query(
+        `ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS pipeline_error TEXT DEFAULT NULL`,
+      );
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -698,6 +709,18 @@ export async function updateDatasetRunCaseResult(
   );
 }
 
+export async function updateDatasetRunCaseError(
+  runCaseId: number,
+  errorMessage: string,
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE dataset_run_cases SET pipeline_error = $1 WHERE id = $2`,
+    [errorMessage, runCaseId],
+  );
+}
+
 export async function updateDatasetRunStatus(
   runId: number,
   status: DatasetRun['status'],
@@ -732,7 +755,7 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
   >(
     `SELECT r.*,
             COUNT(rc.id)::text AS total_cases,
-            COUNT(rc.pipeline_run_id)::text AS completed_cases,
+            COUNT(CASE WHEN rc.pipeline_run_id IS NOT NULL OR rc.pipeline_error IS NOT NULL THEN 1 END)::text AS completed_cases,
             ROUND(
               100.0 * SUM(CASE
                 WHEN dc.label = 'credit' AND pr.planner_output->>'decision' = 'credit' THEN 1
@@ -747,7 +770,7 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
             1)::text AS credit_precision,
             ROUND(
               100.0 * SUM(CASE WHEN dc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
-              / NULLIF(SUM(CASE WHEN dc.label = 'escalate' THEN 1 ELSE 0 END), 0),
+              / NULLIF(SUM(CASE WHEN dc.label = 'escalate' AND pr.id IS NOT NULL THEN 1 ELSE 0 END), 0),
             1)::text AS escalate_recall
      FROM dataset_runs r
      LEFT JOIN dataset_run_cases rc ON rc.run_id = r.id
@@ -779,6 +802,7 @@ interface DatasetRunCaseDbRow {
   run_id: number;
   dataset_case_id: number;
   pipeline_run_id: number | null;
+  pipeline_error: string | null;
   created_at: string;
   case_id: number;
   label: DatasetLabel | null;
@@ -790,6 +814,7 @@ export async function getDatasetRunCases(runId: number): Promise<
     run_id: number;
     dataset_case_id: number;
     pipeline_run_id: number | null;
+    pipeline_error: string | null;
     case_id: number;
     label: DatasetLabel | null;
     pipeline_run: PipelineRunRow | null;
@@ -798,7 +823,7 @@ export async function getDatasetRunCases(runId: number): Promise<
   await ensureMigrations();
   const pool = getPool();
   const { rows } = await pool.query<DatasetRunCaseDbRow>(
-    `SELECT rc.id, rc.run_id, rc.dataset_case_id, rc.pipeline_run_id, rc.created_at,
+    `SELECT rc.id, rc.run_id, rc.dataset_case_id, rc.pipeline_run_id, rc.pipeline_error, rc.created_at,
             dc.case_id, dc.label
      FROM dataset_run_cases rc
      JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
@@ -819,6 +844,7 @@ export async function getDatasetRunCases(runId: number): Promise<
     run_id: r.run_id,
     dataset_case_id: r.dataset_case_id,
     pipeline_run_id: r.pipeline_run_id,
+    pipeline_error: r.pipeline_error,
     case_id: r.case_id,
     label: r.label,
     pipeline_run: r.pipeline_run_id ? (runMap.get(r.pipeline_run_id) ?? null) : null,

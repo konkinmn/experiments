@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS dataset_run_cases (
   run_id INTEGER NOT NULL REFERENCES dataset_runs(id) ON DELETE CASCADE,
   dataset_case_id INTEGER NOT NULL REFERENCES dataset_cases(id) ON DELETE CASCADE,
   pipeline_run_id INTEGER REFERENCES dispute_pipeline_runs(id),
+  pipeline_error TEXT DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(run_id, dataset_case_id)
 );

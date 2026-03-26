@@ -17,6 +17,7 @@ import {
   insertDatasetRun,
   insertDatasetRunCases,
   updateDatasetRunCaseResult,
+  updateDatasetRunCaseError,
   updateDatasetRunStatus,
   listDatasetRuns,
   getDatasetRunCases,
@@ -342,6 +343,7 @@ export async function datasetRoutes(app: FastifyInstance) {
 
       // 5. Execute pipelines in background with concurrency 3
       const cases = await getDatasetRunCases(run.id);
+      let failedCount = 0;
       const tasks = cases.map((rc) => async () => {
         try {
           const pipelineRun = await runDisputePipeline(
@@ -350,20 +352,26 @@ export async function datasetRoutes(app: FastifyInstance) {
           );
           await updateDatasetRunCaseResult(rc.id, pipelineRun.id);
         } catch (error) {
+          failedCount++;
           const message = error instanceof Error ? error.message : String(error);
           app.log.error(
             { caseId: rc.case_id, runId: run.id, error },
             'Pipeline run failed for dataset run case',
           );
-          // Log but continue — partial results are still valuable
-          console.error(`[Run ${run.id}] Pipeline failed for case ${rc.case_id}: ${message}`);
+          await updateDatasetRunCaseError(rc.id, message).catch((dbErr) => {
+            app.log.error(
+              { caseId: rc.case_id, runId: run.id, error: dbErr },
+              'Failed to persist error status for dataset run case',
+            );
+          });
         }
       });
 
       // Fire and forget
       runWithConcurrency(tasks, 3)
         .then(async () => {
-          await updateDatasetRunStatus(run.id, 'completed', new Date());
+          const status = failedCount === cases.length ? 'failed' : 'completed';
+          await updateDatasetRunStatus(run.id, status, new Date());
         })
         .catch(async (error) => {
           app.log.error({ runId: run.id, error }, 'Dataset run batch failed');
@@ -407,6 +415,7 @@ export async function datasetRoutes(app: FastifyInstance) {
         caseId: rc.case_id,
         label: rc.label,
         pipelineRunId: rc.pipeline_run_id,
+        pipelineError: rc.pipeline_error,
         pipelineRun: rc.pipeline_run ? formatPipelineRun(rc.pipeline_run) : null,
         agreement: computeAgreement(rc.label, rc.pipeline_run),
       })),

@@ -290,7 +290,7 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
       datasetId,
       caseId: rc.caseId,
       pipelineRunId: rc.pipelineRunId,
-      pipelineError: null,
+      pipelineError: rc.pipelineError,
       pipelineRun: rc.pipelineRun,
       label: rc.label,
       labelNotes: null,
