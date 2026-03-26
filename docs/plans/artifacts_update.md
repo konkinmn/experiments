@@ -74,12 +74,12 @@ This plan adds fetching and passing of both artifact types. Neither requires Gem
 
 ### Task 4: Update Planner prompt to use new context sections
 
-- [ ] In `dispute-planner-v1.md`, add guidance for the new sections:
+- [x] In `dispute-planner-v1.md`, add guidance for the new sections:
   - `## Case actions` — "Check for `crime_ref_number` in DISPUTE_FORM_FILLED action metadata. If present, use it in `args.crime_reference`."
   - `## Customer dialogue messages` — "These are the customer's own words about the dispute. Use them to understand what the customer claims happened."
-- [ ] Ensure the prompt makes clear that `crime_ref_number` from case actions is a reliable structured signal — not inferred
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Ensure the prompt makes clear that `crime_ref_number` from case actions is a reliable structured signal — not inferred
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 5: Integration test with case 29452
 
