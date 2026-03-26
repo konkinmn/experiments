@@ -41,7 +41,7 @@ export const SEGMENTS: SegmentDefinition[] = [
 
 const SEGMENT_QUERIES: Record<string, string> = {
   clear_credit: `
-SELECT DISTINCT c.id AS case_id
+SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
 JOIN \`anna-money.export.account_customer\` ac ON ac.magneta_alias = c.alias
 JOIN \`anna-money.export.case_case_artifact\` a ON a.case_id = c.id
@@ -51,13 +51,14 @@ WHERE c.issue_type_id = 'dispute'
   AND c.outcome = 'CUSTOMER_REFUNDED'
   AND a.artifact_type = 'TRANSACTION'
   AND ABS(t.amount) <= 25
-  AND DATE_DIFF(DATE(c.created_at), DATE(ac.created_at), DAY) >= 365
+  AND DATE_DIFF(DATE(c.created_at), DATE(ac.created), DAY) >= 365
   AND c.created_at >= TIMESTAMP('2026-01-01')
-ORDER BY c.created_at DESC
+GROUP BY c.id
+ORDER BY MAX(c.created_at) DESC
 LIMIT 30`,
 
   hard_gate: `
-SELECT DISTINCT c.id AS case_id
+SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
 LEFT JOIN \`anna-money.expiring_tables.cifas_matches\` cf ON cf.alias = c.alias
 LEFT JOIN \`anna-money.export.task_manager_agent_tasks\` scam
@@ -66,11 +67,12 @@ WHERE c.issue_type_id = 'dispute'
   AND c.status = 'RESOLVED'
   AND c.created_at >= TIMESTAMP('2026-01-01')
   AND (cf.id IS NOT NULL OR scam.id IS NOT NULL)
-ORDER BY c.created_at DESC
+GROUP BY c.id
+ORDER BY MAX(c.created_at) DESC
 LIMIT 20`,
 
   missing_evidence: `
-SELECT DISTINCT c.id AS case_id
+SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
 JOIN \`anna-money.export.workstation_case_actions\` ca ON ca.case_id = c.id
 WHERE c.issue_type_id = 'dispute'
@@ -78,11 +80,12 @@ WHERE c.issue_type_id = 'dispute'
   AND ca.action_type = 'DISPUTE_FORM_FILLED'
   AND JSON_EXTRACT_SCALAR(ca.metadata, '$.crime_ref_number') IS NULL
   AND c.created_at >= TIMESTAMP('2026-01-01')
-ORDER BY c.created_at DESC
+GROUP BY c.id
+ORDER BY MAX(c.created_at) DESC
 LIMIT 20`,
 
   out_of_scope: `
-SELECT DISTINCT c.id AS case_id
+SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
 JOIN \`anna-money.export.case_case_artifact\` a ON a.case_id = c.id
 JOIN \`anna-money.trusted.business_account__processed_transactions\` t ON t.id = a.artifact_id
@@ -92,14 +95,15 @@ WHERE c.issue_type_id = 'dispute'
   AND ABS(t.amount) > 25
   AND ABS(t.amount) <= 500
   AND c.created_at >= TIMESTAMP('2026-01-01')
-ORDER BY c.created_at DESC
+GROUP BY c.id
+ORDER BY MAX(c.created_at) DESC
 LIMIT 20`,
 
   // Borderline and complex use the same query — recent resolved disputes.
   // Borderline cases emerge from rubric scoring (40–70 range).
   // Complex cases are manually identified during labeling.
   borderline: `
-SELECT DISTINCT c.id AS case_id
+SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
 WHERE c.issue_type_id = 'dispute'
   AND c.status = 'RESOLVED'
@@ -108,7 +112,7 @@ ORDER BY c.created_at DESC
 LIMIT 30`,
 
   complex: `
-SELECT DISTINCT c.id AS case_id
+SELECT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
 WHERE c.issue_type_id = 'dispute'
   AND c.status = 'RESOLVED'
