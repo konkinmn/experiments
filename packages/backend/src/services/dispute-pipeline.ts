@@ -321,7 +321,7 @@ async function callPlanner(
   rawSignals: CaseSignalsRaw,
   caseDetails: { artifacts: unknown[] } | null,
   enrichment: EnrichmentData,
-): Promise<{ output: PlannerOutput; rawResponse: string }> {
+): Promise<{ output: PlannerOutput; rawResponse: string; plannerRequest: Record<string, unknown>; systemPrompt: string }> {
   const prompt = await getPromptById(PROMPT_ID);
   if (!prompt) {
     throw new Error(`Prompt ${PROMPT_ID} not found`);
@@ -398,7 +398,7 @@ async function callPlanner(
 
   try {
     const validated = PlannerOutputSchema.parse(parsed);
-    return { output: validated, rawResponse };
+    return { output: validated, rawResponse, plannerRequest: signalsPayload, systemPrompt: prompt.content };
   } catch (zodErr) {
     throw Object.assign(
       zodErr instanceof Error ? zodErr : new Error(String(zodErr)),
@@ -431,6 +431,11 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
 
   let plannerOutput: PlannerOutput | null = null;
   let plannerRawResponse: string | null = null;
+  let plannerRequest: Record<string, unknown> | null = null;
+  let plannerSystemPrompt: string | null = null;
+  let fileParseResults: string[] | null = null;
+  let dialogueMessages: DialogueMessage[] | null = null;
+  let enrichmentMetadata: Record<string, unknown> | null = null;
 
   if (!triggeredGate) {
     // Collect FILE and DIALOGUE artifact IDs from case artifacts
@@ -454,17 +459,29 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       });
 
     // Run dialogue and file enrichments in parallel
-    const [dialogueMessagesResult, parsedFileDescriptions] = await Promise.all([
+    const [dialoguesFetchResult, parsedFileDescriptions] = await Promise.all([
       fetchCaseDialogues(dialogueArtifactIds),
       fetchAndParseFileArtifacts(fileArtifacts),
     ]);
-    const allCustomerMessages = filterCustomerMessages(dialogueMessagesResult);
+    const allCustomerMessages = filterCustomerMessages(dialoguesFetchResult.messages);
     // Sort by time so the most recent messages are at the end, then take last N
     allCustomerMessages.sort((a, b) => a.created_at.localeCompare(b.created_at));
     const MAX_DIALOGUE_MESSAGES = 50;
     const customerDialogueMessages = allCustomerMessages.slice(-MAX_DIALOGUE_MESSAGES);
 
-    console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialogueMessagesResult.length} (customer: ${allCustomerMessages.length}, sent to planner: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);
+    console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialoguesFetchResult.messages.length} (customer: ${allCustomerMessages.length}, sent to planner: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);
+
+    // Capture enrichment data for DB storage
+    fileParseResults = parsedFileDescriptions.length > 0 ? parsedFileDescriptions : null;
+    dialogueMessages = customerDialogueMessages.length > 0 ? customerDialogueMessages : null;
+    enrichmentMetadata = {
+      ...dialoguesFetchResult.metadata,
+      total_messages_fetched: dialoguesFetchResult.messages.length,
+      customer_messages_filtered: allCustomerMessages.length,
+      customer_messages_sent_to_planner: customerDialogueMessages.length,
+      file_artifacts_found: fileArtifacts.length,
+      file_descriptions_parsed: parsedFileDescriptions.length,
+    };
 
     // Layer 2: Planner
     try {
@@ -476,6 +493,8 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       );
       plannerOutput = result.output;
       plannerRawResponse = result.rawResponse;
+      plannerRequest = result.plannerRequest;
+      plannerSystemPrompt = result.systemPrompt;
     } catch (err) {
       // Parse error fallback — escalate, don't throw
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -521,6 +540,11 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     prompt_version: PROMPT_ID,
     planner_raw_response: plannerRawResponse,
     case_actions: caseActions.length > 0 ? caseActions : null,
+    planner_request: plannerRequest,
+    planner_system_prompt: plannerSystemPrompt,
+    file_parse_results: fileParseResults,
+    dialogue_messages: dialogueMessages,
+    enrichment_metadata: enrichmentMetadata,
   });
 
   return row;

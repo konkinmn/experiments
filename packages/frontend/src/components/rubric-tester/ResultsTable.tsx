@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Check, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Check, X, AlertTriangle, MessageSquare, FileText, Code, BookOpen, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -160,6 +160,12 @@ function ExpandedDetail({
 }) {
   const [reviewNotes, setReviewNotes] = useState(result.reviewerNotes ?? '');
   const [showRawData, setShowRawData] = useState(false);
+  const [showEnrichment, setShowEnrichment] = useState(false);
+  const [showDialogue, setShowDialogue] = useState(false);
+  const [showFileResults, setShowFileResults] = useState(false);
+  const [showPlannerRequest, setShowPlannerRequest] = useState(false);
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [showRawResponse, setShowRawResponse] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -301,6 +307,166 @@ function ExpandedDetail({
           </div>
         )}
       </div>
+
+      {/* Enrichment Summary */}
+      {result.enrichmentMetadata && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowEnrichment(!showEnrichment)}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showEnrichment ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <AlertTriangle className="h-3 w-3" />
+            Enrichment Summary
+            {(result.enrichmentMetadata.chat_fetch_failures as unknown[])?.length > 0 && (
+              <Badge variant="amber" className="ml-1">
+                {(result.enrichmentMetadata.chat_fetch_failures as unknown[]).length} failed
+              </Badge>
+            )}
+          </button>
+          {showEnrichment && (
+            <div className="mt-2 space-y-3">
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground">Dialogues</span>
+                  <p className="font-medium">
+                    {result.enrichmentMetadata.dialogues_found ?? 0} found / {result.enrichmentMetadata.dialogues_requested ?? 0} requested
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Files</span>
+                  <p className="font-medium">
+                    {result.enrichmentMetadata.file_descriptions_parsed ?? 0} parsed / {result.enrichmentMetadata.file_artifacts_found ?? 0} found
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Messages to planner</span>
+                  <p className="font-medium">{result.enrichmentMetadata.customer_messages_sent_to_planner ?? 0}</p>
+                </div>
+              </div>
+              {(result.enrichmentMetadata.chat_fetch_failures as Array<{ dialogue_id: number; alias: string; status: number; error_body: string }>)?.length > 0 && (
+                <div>
+                  <h5 className="text-xs font-medium text-red-600 mb-1">Chat Fetch Failures</h5>
+                  <div className="bg-red-50 rounded p-2 text-xs space-y-1 max-h-40 overflow-auto">
+                    {(result.enrichmentMetadata.chat_fetch_failures as Array<{ dialogue_id: number; alias: string; status: number; error_body: string }>).map((f, i) => (
+                      <div key={i} className="font-mono">
+                        <span className="text-red-600">{f.status}</span>{' '}
+                        dialogue {f.dialogue_id} (alias={f.alias})
+                        {f.error_body && <span className="text-muted-foreground"> — {f.error_body}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Customer Dialogue */}
+      {result.dialogueMessages && result.dialogueMessages.length > 0 && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowDialogue(!showDialogue)}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showDialogue ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <MessageSquare className="h-3 w-3" />
+            Customer Dialogue ({result.dialogueMessages.length} messages)
+          </button>
+          {showDialogue && (
+            <div className="mt-2 space-y-2 max-h-96 overflow-auto">
+              {result.dialogueMessages.map((msg, i) => (
+                <div key={i} className="flex gap-2 text-sm">
+                  <Badge variant="gray" className="shrink-0 h-5 text-[10px]">{msg.role}</Badge>
+                  <div className="min-w-0">
+                    <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{msg.created_at}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* File Parse Results */}
+      {result.fileParseResults && result.fileParseResults.length > 0 && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowFileResults(!showFileResults)}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showFileResults ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <FileText className="h-3 w-3" />
+            File Parse Results ({result.fileParseResults.length} files)
+          </button>
+          {showFileResults && (
+            <div className="mt-2 space-y-2">
+              {result.fileParseResults.map((desc, i) => (
+                <div key={i} className="bg-gray-50 rounded p-3 text-sm whitespace-pre-wrap">{desc}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Planner Request Payload */}
+      {result.plannerRequest && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowPlannerRequest(!showPlannerRequest)}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showPlannerRequest ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <Code className="h-3 w-3" />
+            Planner Request Payload
+          </button>
+          {showPlannerRequest && (
+            <pre className="mt-2 bg-gray-50 rounded p-3 text-xs font-mono overflow-auto max-h-96">
+              {JSON.stringify(result.plannerRequest, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* System Prompt */}
+      {result.plannerSystemPrompt && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowSystemPrompt(!showSystemPrompt)}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showSystemPrompt ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <BookOpen className="h-3 w-3" />
+            System Prompt
+          </button>
+          {showSystemPrompt && (
+            <pre className="mt-2 bg-gray-50 rounded p-3 text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap">
+              {result.plannerSystemPrompt}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Raw LLM Response */}
+      {result.plannerRawResponse && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowRawResponse(!showRawResponse)}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showRawResponse ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <Terminal className="h-3 w-3" />
+            Raw LLM Response
+          </button>
+          {showRawResponse && (
+            <pre className="mt-2 bg-gray-50 rounded p-3 text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap">
+              {result.plannerRawResponse}
+            </pre>
+          )}
+        </div>
+      )}
 
       {/* Reviewer Controls */}
       {onReview && (

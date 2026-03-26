@@ -85,6 +85,26 @@ async function applyMigrations(): Promise<void> {
         `ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS case_actions JSONB DEFAULT NULL`,
       );
     }
+    // Migration 005: enrichment columns
+    const enrichmentCols = [
+      { name: 'planner_request', type: 'JSONB DEFAULT NULL' },
+      { name: 'planner_system_prompt', type: 'TEXT DEFAULT NULL' },
+      { name: 'file_parse_results', type: 'JSONB DEFAULT NULL' },
+      { name: 'dialogue_messages', type: 'JSONB DEFAULT NULL' },
+      { name: 'enrichment_metadata', type: 'JSONB DEFAULT NULL' },
+    ];
+    for (const col of enrichmentCols) {
+      const { rows: colRows } = await pool.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'dispute_pipeline_runs' AND column_name = $1`,
+        [col.name],
+      );
+      if (colRows.length === 0) {
+        await pool.query(
+          `ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`,
+        );
+      }
+    }
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -185,8 +205,9 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
     `INSERT INTO dispute_pipeline_runs
        (case_id, raw_signals, case_details, dispute_profile, hard_gates, hard_gate_triggered,
         planner_output, executor_action, pipeline_duration_ms, prompt_version, planner_raw_response,
-        case_actions)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        case_actions, planner_request, planner_system_prompt, file_parse_results,
+        dialogue_messages, enrichment_metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
      RETURNING *`,
     [
       row.case_id,
@@ -201,6 +222,11 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
       row.prompt_version,
       row.planner_raw_response,
       row.case_actions ? JSON.stringify(row.case_actions) : null,
+      row.planner_request ? JSON.stringify(row.planner_request) : null,
+      row.planner_system_prompt,
+      row.file_parse_results ? JSON.stringify(row.file_parse_results) : null,
+      row.dialogue_messages ? JSON.stringify(row.dialogue_messages) : null,
+      row.enrichment_metadata ? JSON.stringify(row.enrichment_metadata) : null,
     ],
   );
   if (!rows[0]) throw new Error('Insert did not return a row');

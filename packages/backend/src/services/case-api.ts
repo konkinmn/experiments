@@ -216,10 +216,25 @@ export async function fetchCaseActions(caseId: number): Promise<CaseAction[]> {
   }
 }
 
-export async function fetchCaseDialogues(artifactIds: string[]): Promise<DialogueMessage[]> {
-  if (artifactIds.length === 0) return [];
+import type { DialogueFetchMetadata } from '../types/dispute-pipeline.js';
+
+export interface DialoguesFetchResult {
+  messages: DialogueMessage[];
+  metadata: DialogueFetchMetadata;
+}
+
+export async function fetchCaseDialogues(artifactIds: string[]): Promise<DialoguesFetchResult> {
+  const emptyMetadata: DialogueFetchMetadata = {
+    dialogues_requested: artifactIds.length,
+    dialogues_found: 0,
+    dialogues_with_messages: 0,
+    chat_fetch_failures: [],
+  };
+
+  if (artifactIds.length === 0) return { messages: [], metadata: emptyMetadata };
 
   const allMessages: DialogueMessage[] = [];
+  const metadata: DialogueFetchMetadata = { ...emptyMetadata };
 
   try {
     // Step 1: Get dialogue records including alias
@@ -233,13 +248,14 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
 
     if (!dialoguesResponse.ok) {
       console.warn(`Failed to fetch dialogues: ${dialoguesResponse.status} ${dialoguesResponse.statusText}`);
-      return [];
+      return { messages: [], metadata };
     }
 
     const dialoguesBody = await dialoguesResponse.json() as {
       data?: Array<{ id: number; alias: string }>;
     };
     const dialogues = dialoguesBody.data || [];
+    metadata.dialogues_found = dialogues.length;
 
     // Process each dialogue
     for (const dialogue of dialogues) {
@@ -264,6 +280,8 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
         const messageRecords = messagesBody.data || [];
         if (messageRecords.length === 0) continue;
 
+        metadata.dialogues_with_messages++;
+
         // Step 3: Get message content from chat service
         const messageIdParams = messageRecords.map((m) => `id[]=${encodeURIComponent(m.id)}`).join('&');
         const chatUrl = `${CHAT_BASE_URL}/api/2/user/${encodeURIComponent(dialogue.alias)}/messages?${messageIdParams}`;
@@ -275,7 +293,16 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
         });
 
         if (!chatResponse.ok) {
-          console.warn(`Failed to fetch chat messages for dialogue ${dialogue.id}: ${chatResponse.status}`);
+          const errorBody = await chatResponse.text().catch(() => '');
+          console.warn(
+            `Failed to fetch chat messages for dialogue ${dialogue.id} (alias=${dialogue.alias}, ${messageRecords.length} msg IDs): ${chatResponse.status} — ${errorBody.slice(0, 500)}`,
+          );
+          metadata.chat_fetch_failures.push({
+            dialogue_id: dialogue.id,
+            alias: dialogue.alias,
+            status: chatResponse.status,
+            error_body: errorBody.slice(0, 500),
+          });
           continue;
         }
 
@@ -305,7 +332,7 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
     console.warn('Failed to fetch dialogues:', err instanceof Error ? err.message : String(err));
   }
 
-  return allMessages;
+  return { messages: allMessages, metadata };
 }
 
 export async function fetchCaseTimelines(caseIds: number[]): Promise<Map<number, CaseTimeline>> {
