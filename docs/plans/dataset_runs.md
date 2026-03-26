@@ -157,7 +157,7 @@ gemini-2.5-flash
 
 ### Task 5: Backend — agreement metrics
 
-- [ ] Agreement is computed at query time in `listDatasetRuns`. For each run, compute:
+- [x] Agreement is computed at query time in `listDatasetRuns`. For each run, compute:
 
 ```sql
 -- agreement_rate: planner decision matches label
@@ -195,9 +195,9 @@ WHERE r.dataset_id = $1
 GROUP BY r.id
 ```
 
-- [ ] Expose metrics on `DatasetRun` type
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Expose metrics on `DatasetRun` type
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 

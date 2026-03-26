@@ -722,13 +722,37 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
   await ensureMigrations();
   const pool = getPool();
   const { rows } = await pool.query<
-    DatasetRunRow & { total_cases: string; completed_cases: string }
+    DatasetRunRow & {
+      total_cases: string;
+      completed_cases: string;
+      agreement_rate: string | null;
+      credit_precision: string | null;
+      escalate_recall: string | null;
+    }
   >(
     `SELECT r.*,
             COUNT(rc.id)::text AS total_cases,
-            COUNT(rc.pipeline_run_id)::text AS completed_cases
+            COUNT(rc.pipeline_run_id)::text AS completed_cases,
+            ROUND(
+              100.0 * SUM(CASE
+                WHEN dc.label = 'credit' AND pr.planner_output->>'decision' = 'credit' THEN 1
+                WHEN dc.label = 'escalate' AND pr.planner_output->>'decision' = 'escalate_to_agent' THEN 1
+                WHEN dc.label = 'escalate' AND pr.hard_gate_triggered IS NOT NULL THEN 1
+                ELSE 0
+              END) / NULLIF(COUNT(CASE WHEN dc.label IN ('credit','escalate') AND pr.id IS NOT NULL THEN 1 END), 0),
+            1)::text AS agreement_rate,
+            ROUND(
+              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label = 'credit' THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' THEN 1 ELSE 0 END), 0),
+            1)::text AS credit_precision,
+            ROUND(
+              100.0 * SUM(CASE WHEN dc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN dc.label = 'escalate' THEN 1 ELSE 0 END), 0),
+            1)::text AS escalate_recall
      FROM dataset_runs r
      LEFT JOIN dataset_run_cases rc ON rc.run_id = r.id
+     LEFT JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
+     LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
      WHERE r.dataset_id = $1
      GROUP BY r.id
      ORDER BY r.created_at DESC`,
@@ -744,9 +768,9 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
     completed_at: r.completed_at,
     total_cases: parseInt(r.total_cases, 10),
     completed_cases: parseInt(r.completed_cases, 10),
-    agreement_rate: null,
-    credit_precision: null,
-    escalate_recall: null,
+    agreement_rate: r.agreement_rate !== null ? parseFloat(r.agreement_rate) : null,
+    credit_precision: r.credit_precision !== null ? parseFloat(r.credit_precision) : null,
+    escalate_recall: r.escalate_recall !== null ? parseFloat(r.escalate_recall) : null,
   }));
 }
 
