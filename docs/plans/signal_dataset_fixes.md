@@ -16,7 +16,7 @@ This plan fixes the query so all time-windowed signals are calculated relative t
 
 ### Task 1: Fix account_age_days
 
-- [ ] In `signals-query.ts`, update the `account_age_days` calculation in the `account_data` CTE:
+- [x] In `signals-query.ts`, update the `account_age_days` calculation in the `account_data` CTE:
 
 ```sql
 -- before
@@ -26,8 +26,8 @@ DATE_DIFF(CURRENT_DATE(), DATE(ac.created_at), DAY) AS account_age_days
 DATE_DIFF(DATE(cd.case_created_at), DATE(ac.created_at), DAY) AS account_age_days
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 2: Fix transaction activity window
 

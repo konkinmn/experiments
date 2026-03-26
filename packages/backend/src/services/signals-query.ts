@@ -28,7 +28,7 @@ case_merchants AS (
 account_data AS (
   SELECT
     ac.created AS account_created_at,
-    DATE_DIFF(CURRENT_DATE(), DATE(ac.created), DAY) AS account_age_days,
+    DATE_DIFF(DATE((SELECT case_created_at FROM case_data)), DATE(ac.created), DAY) AS account_age_days,
     ac.status AS account_status
   FROM \`anna-money.export.account_customer\` ac
   WHERE ac.magneta_alias = (SELECT alias FROM case_data)
