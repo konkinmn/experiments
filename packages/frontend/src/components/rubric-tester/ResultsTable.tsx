@@ -65,7 +65,7 @@ function accountAgePts(days: number): number {
 function trustScorePts(score: string | null): number {
   const s = score?.toUpperCase();
   if (s === 'GREEN') return 8;
-  if (s === 'BLUE') return 4;
+  if (s === 'AMBER') return 4;
   return 0;
 }
 

@@ -82,7 +82,7 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
 
   const trust = raw.trust_score?.toUpperCase();
   if (trust === 'GREEN') accountTrust += 8;
-  else if (trust === 'BLUE') accountTrust += 4;
+  else if (trust === 'AMBER') accountTrust += 4;
 
   if (raw.tx_count_90_days >= 5) accountTrust += 5;
 
@@ -132,7 +132,7 @@ function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals): D
   if (raw.account_status !== 'ACCOUNT_IS_ACTIVE') riskFactors.push(`Account status: ${raw.account_status}`);
   if (raw.railsr_disputes_last_6_months > 0) riskFactors.push(`${raw.railsr_disputes_last_6_months} Railsr dispute(s) in last 6 months`);
   if (raw.account_age_days < 180) riskFactors.push(`New account (${raw.account_age_days} days)`);
-  if (raw.trust_score?.toUpperCase() === 'AMBER') riskFactors.push('Amber trust score');
+  if (raw.trust_score?.toUpperCase() === 'BLUE') riskFactors.push('Blue trust score (lowest level)');
   if (raw.tier_name?.toUpperCase() === 'B') riskFactors.push('Tier B');
   if (raw.scam_victim_count > 0) riskFactors.push(`Scam victim (${raw.scam_victim_count})`);
 

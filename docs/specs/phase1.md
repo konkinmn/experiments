@@ -37,7 +37,7 @@ Generated on dispute form submission. Saved to case in WorkStation. Built by Int
     transaction_amount: number
     merchant: string
   }
-  risk_factors: string[]         // human-readable flags e.g. "Amber trust score"
+  risk_factors: string[]         // human-readable flags e.g. "Blue trust score"
 }
 ```
 
@@ -55,7 +55,7 @@ Category 1 — Account Trust (max 58):
 - Account age ≥ 365d → 20, ≥ 180d → 12, ≥ 90d → 5
 - Tier E → +10, D → +8, C → +5, B → 0
 - Money Maker → +15
-- Trust score GREEN → +8, BLUE → +4, AMBER → 0
+- Trust score GREEN → +8, AMBER → +4, BLUE → 0
 - tx_count_90_days ≥ 5 → +5
 
 Category 2 — Dispute History (max 30):
