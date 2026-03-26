@@ -52,8 +52,8 @@ CREATE INDEX idx_dataset_cases_label ON dataset_cases(label);
 
 ### Task 2: Backend — preset segment queries
 
-- [ ] Create `packages/backend/src/services/dataset-segments.ts`
-- [ ] Define `PRESETS` array — each preset has: `key`, `label`, `description`, and a BQ query that returns `case_id` values. Reuse scammer/Railsr group UUIDs from `signals-query.ts`.
+- [x] Create `packages/backend/src/services/dataset-segments.ts`
+- [x] Define `PRESETS` array — each preset has: `key`, `label`, `description`, and a BQ query that returns `case_id` values. Reuse scammer/Railsr group UUIDs from `signals-query.ts`.
 
 Presets:
 
@@ -132,10 +132,10 @@ ORDER BY c.created_at DESC
 LIMIT 30
 ```
 
-- [ ] Export `getPresets(): PresetInfo[]` and `runPresetQuery(key: string): Promise<number[]>`
-- [ ] Export `runCustomSql(sql: string): Promise<number[]>` — executes arbitrary BQ SQL, validates result has `case_id` column, returns array of integers. Reject if query returns >100 rows.
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Export `getPresets(): PresetInfo[]` and `runPresetQuery(key: string): Promise<number[]>`
+- [x] Export `runCustomSql(sql: string): Promise<number[]>` — executes arbitrary BQ SQL, validates result has `case_id` column, returns array of integers. Reject if query returns >100 rows.
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
