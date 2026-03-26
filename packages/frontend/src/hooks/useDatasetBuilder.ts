@@ -73,6 +73,18 @@ export function useDeleteDatasetCase() {
   });
 }
 
+export function useLabelRunCase() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, label, notes, labeledBy }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null }) =>
+      api.labelRunCase(id, label, notes, labeledBy),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-run-cases'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });
+    },
+  });
+}
+
 export function useRunOptions() {
   return useQuery({
     queryKey: ['run-options'],

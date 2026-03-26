@@ -21,6 +21,7 @@ import {
   updateDatasetRunStatus,
   listDatasetRuns,
   getDatasetRunCases,
+  updateDatasetRunCaseLabel,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
 import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig } from '../types/dispute-pipeline.js';
@@ -414,12 +415,37 @@ export async function datasetRoutes(app: FastifyInstance) {
         datasetCaseId: rc.dataset_case_id,
         caseId: rc.case_id,
         label: rc.label,
+        labelNotes: rc.label_notes,
+        labeledBy: rc.labeled_by,
+        labeledAt: rc.labeled_at,
         pipelineRunId: rc.pipeline_run_id,
         pipelineError: rc.pipeline_error,
         pipelineRun: rc.pipeline_run ? formatPipelineRun(rc.pipeline_run) : null,
         agreement: computeAgreement(rc.label, rc.pipeline_run),
       })),
     };
+  });
+
+  // PATCH /run-cases/:id/label — Save run-specific label
+  app.patch<{ Params: { id: string } }>('/run-cases/:id/label', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+
+    try {
+      const body = LabelSchema.parse(request.body);
+      const row = await updateDatasetRunCaseLabel(id, body.label, body.notes ?? null, body.labeledBy ?? null);
+      if (!row) {
+        return reply.status(404).send({ error: 'Run case not found' });
+      }
+      return { success: true };
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      throw error;
+    }
   });
 }
 

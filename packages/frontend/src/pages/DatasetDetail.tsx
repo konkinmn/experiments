@@ -9,6 +9,7 @@ import { NewRunModal } from '@/components/dataset-builder';
 import {
   useDataset,
   useLabelDatasetCase,
+  useLabelRunCase,
   useDeleteDatasetCase,
   useDeleteDataset,
   useDatasetRuns,
@@ -282,20 +283,25 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
     enabled: true,
     polling: isActive,
   });
+  const labelRunCase = useLabelRunCase();
+
+  const handleRunLabel = (runCaseId: number, label: DatasetLabel, notes?: string) => {
+    labelRunCase.mutate({ id: runCaseId, label, notes: notes ?? null, labeledBy: null });
+  };
 
   const mappedCases: DatasetCase[] = useMemo(() => {
     if (!runCases) return [];
     return runCases.map((rc) => ({
-      id: rc.datasetCaseId,
+      id: rc.id,
       datasetId,
       caseId: rc.caseId,
       pipelineRunId: rc.pipelineRunId,
       pipelineError: rc.pipelineError,
       pipelineRun: rc.pipelineRun,
       label: rc.label,
-      labelNotes: null,
-      labeledBy: null,
-      labeledAt: null,
+      labelNotes: rc.labelNotes,
+      labeledBy: rc.labeledBy,
+      labeledAt: rc.labeledAt,
       createdAt: '',
     }));
   }, [runCases, datasetId]);
@@ -304,9 +310,23 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
     if (!runCases) return {};
     const map: Record<number, boolean | null> = {};
     for (const rc of runCases) {
-      map[rc.datasetCaseId] = rc.agreement;
+      map[rc.id] = rc.agreement;
     }
     return map;
+  }, [runCases]);
+
+  const runSummary = useMemo(() => {
+    if (!runCases) return { total: 0, labeled: 0, credit: 0, escalate: 0, needsMoreInfo: 0 };
+    let labeled = 0, credit = 0, escalate = 0, needsMoreInfo = 0;
+    for (const rc of runCases) {
+      if (rc.label) {
+        labeled++;
+        if (rc.label === 'credit') credit++;
+        else if (rc.label === 'escalate') escalate++;
+        else if (rc.label === 'needs_more_info') needsMoreInfo++;
+      }
+    }
+    return { total: runCases.length, labeled, credit, escalate, needsMoreInfo };
   }, [runCases]);
 
   return (
@@ -365,11 +385,42 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
         </CardContent>
       </Card>
 
+      {/* Label summary */}
+      {runCases && runCases.length > 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="grid grid-cols-5 gap-4 text-center">
+              <div>
+                <p className="text-2xl font-bold">{runSummary.total}</p>
+                <p className="text-xs text-muted-foreground">Total Cases</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{runSummary.labeled}</p>
+                <p className="text-xs text-muted-foreground">Labeled</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-green-600">{runSummary.credit}</p>
+                <p className="text-xs text-muted-foreground">Credit</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-amber-600">{runSummary.escalate}</p>
+                <p className="text-xs text-muted-foreground">Escalate</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-blue-600">{runSummary.needsMoreInfo}</p>
+                <p className="text-xs text-muted-foreground">Needs More Info</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Run case cards */}
       <ResultsTable
         results={[]}
         verdictOptions="dataset"
         datasetCases={mappedCases}
+        onDatasetLabel={handleRunLabel}
         agreementMap={agreementMap}
       />
     </div>

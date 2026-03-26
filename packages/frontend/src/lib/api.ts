@@ -114,6 +114,12 @@ export const api = {
       body: JSON.stringify({ label, notes, labeledBy }),
     }),
 
+  labelRunCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null) =>
+    fetchApi<{ success: boolean }>(`/api/datasets/run-cases/${id}/label`, {
+      method: 'PATCH',
+      body: JSON.stringify({ label, notes, labeledBy }),
+    }),
+
   deleteDatasetCase: (id: number) =>
     fetchApi<{ success: boolean }>(`/api/datasets/cases/${id}`, {
       method: 'DELETE',

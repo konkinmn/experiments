@@ -241,6 +241,20 @@ async function applyMigrations(): Promise<void> {
       );
     }
 
+    // Migration: add label columns to dataset_run_cases for per-run labeling
+    const { rows: runCaseLabelCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_run_cases' AND column_name = 'label'`,
+    );
+    if (runCaseLabelCol.length === 0) {
+      await pool.query(`
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS label TEXT CHECK (label IN ('credit', 'escalate', 'needs_more_info'));
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS label_notes TEXT;
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS labeled_by TEXT;
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS labeled_at TIMESTAMPTZ;
+      `);
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -593,6 +607,24 @@ export async function updateDatasetCaseLabel(
   return rows[0] ?? null;
 }
 
+export async function updateDatasetRunCaseLabel(
+  id: number,
+  label: DatasetLabel,
+  notes: string | null,
+  labeledBy: string | null,
+): Promise<DatasetRunCaseDbRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetRunCaseDbRow>(
+    `UPDATE dataset_run_cases
+     SET label = $1, label_notes = $2, labeled_by = $3, labeled_at = now()
+     WHERE id = $4
+     RETURNING *, (SELECT case_id FROM dataset_cases WHERE id = dataset_case_id) AS case_id`,
+    [label, notes, labeledBy, id],
+  );
+  return rows[0] ?? null;
+}
+
 export async function updateDatasetCasePipelineRun(
   id: number,
   pipelineRunId: number,
@@ -758,23 +790,22 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
             COUNT(CASE WHEN rc.pipeline_run_id IS NOT NULL OR rc.pipeline_error IS NOT NULL THEN 1 END)::text AS completed_cases,
             ROUND(
               100.0 * SUM(CASE
-                WHEN dc.label = 'credit' AND pr.planner_output->>'decision' = 'credit' THEN 1
-                WHEN dc.label = 'escalate' AND pr.planner_output->>'decision' = 'escalate_to_agent' THEN 1
-                WHEN dc.label = 'escalate' AND pr.hard_gate_triggered IS NOT NULL THEN 1
+                WHEN rc.label = 'credit' AND pr.planner_output->>'decision' = 'credit' THEN 1
+                WHEN rc.label = 'escalate' AND pr.planner_output->>'decision' = 'escalate_to_agent' THEN 1
+                WHEN rc.label = 'escalate' AND pr.hard_gate_triggered IS NOT NULL THEN 1
                 ELSE 0
-              END) / NULLIF(COUNT(CASE WHEN dc.label IN ('credit','escalate') AND pr.id IS NOT NULL THEN 1 END), 0),
+              END) / NULLIF(COUNT(CASE WHEN rc.label IN ('credit','escalate') AND pr.id IS NOT NULL THEN 1 END), 0),
             1)::text AS agreement_rate,
             ROUND(
-              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label = 'credit' THEN 1 ELSE 0 END)
-              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
+              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label = 'credit' THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
             1)::text AS credit_precision,
             ROUND(
-              100.0 * SUM(CASE WHEN dc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
-              / NULLIF(SUM(CASE WHEN dc.label = 'escalate' AND pr.id IS NOT NULL THEN 1 ELSE 0 END), 0),
+              100.0 * SUM(CASE WHEN rc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN rc.label = 'escalate' AND pr.id IS NOT NULL THEN 1 ELSE 0 END), 0),
             1)::text AS escalate_recall
      FROM dataset_runs r
      LEFT JOIN dataset_run_cases rc ON rc.run_id = r.id
-     LEFT JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
      LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
      WHERE r.dataset_id = $1
      GROUP BY r.id
@@ -806,6 +837,9 @@ interface DatasetRunCaseDbRow {
   created_at: string;
   case_id: number;
   label: DatasetLabel | null;
+  label_notes: string | null;
+  labeled_by: string | null;
+  labeled_at: string | null;
 }
 
 export async function getDatasetRunCases(runId: number): Promise<
@@ -817,6 +851,9 @@ export async function getDatasetRunCases(runId: number): Promise<
     pipeline_error: string | null;
     case_id: number;
     label: DatasetLabel | null;
+    label_notes: string | null;
+    labeled_by: string | null;
+    labeled_at: string | null;
     pipeline_run: PipelineRunRow | null;
   }>
 > {
@@ -824,7 +861,7 @@ export async function getDatasetRunCases(runId: number): Promise<
   const pool = getPool();
   const { rows } = await pool.query<DatasetRunCaseDbRow>(
     `SELECT rc.id, rc.run_id, rc.dataset_case_id, rc.pipeline_run_id, rc.pipeline_error, rc.created_at,
-            dc.case_id, dc.label
+            dc.case_id, rc.label, rc.label_notes, rc.labeled_by, rc.labeled_at
      FROM dataset_run_cases rc
      JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
      WHERE rc.run_id = $1
@@ -847,6 +884,9 @@ export async function getDatasetRunCases(runId: number): Promise<
     pipeline_error: r.pipeline_error,
     case_id: r.case_id,
     label: r.label,
+    label_notes: r.label_notes,
+    labeled_by: r.labeled_by,
+    labeled_at: r.labeled_at,
     pipeline_run: r.pipeline_run_id ? (runMap.get(r.pipeline_run_id) ?? null) : null,
   }));
 }
