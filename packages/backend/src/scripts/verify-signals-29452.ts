@@ -58,22 +58,18 @@ check(
   `trust_score=${signals.trust_score} (expected BLUE, would be AMBER if using current date)`,
 );
 
-// --- Check 2: account_age_days is ~432 days from 2026-02-28, not today ---
+// --- Check 2: account_age_days is ~409 days from 2026-02-28, not today ---
 // account_age_days = DATE_DIFF(DATE(case_created_at), DATE(account.created_at), DAY)
 // If using CURRENT_TIMESTAMP instead, the value would be higher by the number of days since filing.
 const daysSinceFiling = Math.floor(
   (Date.now() - CASE_CREATED_DATE.getTime()) / (1000 * 60 * 60 * 24),
 );
-// The value should be around 432 days. If it were today-based, it would be ~432 + daysSinceFiling.
-// We check it's in a reasonable range around 432 and NOT inflated by the days since filing.
 const expectedApprox = 409;
 const tolerance = 5; // allow small tolerance for the exact account creation time
-const notInflated = signals.account_age_days < expectedApprox + daysSinceFiling - 5;
 check(
   'account_age_days is ~409 (not inflated by current date)',
   signals.account_age_days >= expectedApprox - tolerance &&
-    signals.account_age_days <= expectedApprox + tolerance &&
-    notInflated,
+    signals.account_age_days <= expectedApprox + tolerance,
   `account_age_days=${signals.account_age_days} (expected ~${expectedApprox}, would be ~${expectedApprox + daysSinceFiling} if using current date)`,
 );
 
@@ -95,12 +91,20 @@ check(
 
 // --- Check 5: railsr_disputes_last_6_months counts only disputes before 2026-02-28 ---
 // The upper bound ensures disputes filed AFTER the case are excluded.
-// We verify the value is a non-negative integer (can be 0 if no disputes in window).
+// We can only verify the type and structural invariant here — the exact expected count
+// for this case is unknown, but 6-month count must be >= 30-day count (subset relationship).
 check(
-  'railsr_disputes_last_6_months is bounded (disputes before filing only)',
+  'railsr_disputes_last_6_months is non-negative integer',
   signals.railsr_disputes_last_6_months >= 0 &&
     Number.isInteger(signals.railsr_disputes_last_6_months),
   `railsr_disputes_last_6_months=${signals.railsr_disputes_last_6_months} (window: 2025-08-28 to 2026-02-28)`,
+);
+
+// --- Check 6: 6-month dispute count >= 30-day dispute count (subset invariant) ---
+check(
+  'railsr_disputes_last_6_months >= railsr_disputes_last_30_days',
+  signals.railsr_disputes_last_6_months >= signals.railsr_disputes_last_30_days,
+  `6m=${signals.railsr_disputes_last_6_months} >= 30d=${signals.railsr_disputes_last_30_days}`,
 );
 
 // --- Additional signal dump for manual inspection ---

@@ -108,7 +108,7 @@ dispute_history AS (
   WHERE
     t.alias = (SELECT alias FROM case_data)
     AND t.task_type = 'DISPUTE'
-    AND t.created_at >= TIMESTAMP_SUB((SELECT case_created_at FROM case_data), INTERVAL 180 DAY)
+    AND t.created_at >= TIMESTAMP(DATETIME_SUB(DATETIME((SELECT case_created_at FROM case_data)), INTERVAL 6 MONTH))
     AND t.created_at < (SELECT case_created_at FROM case_data)
 )
 SELECT
