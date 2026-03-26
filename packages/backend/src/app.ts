@@ -29,7 +29,7 @@ export function buildApp() {
   app.register(healthRoutes);
   app.register(timelineAnalyzerRoutes, { prefix: '/api/timeline-analyzer' });
   app.register(disputePipelineRoutes, { prefix: '/api/dispute-pipeline' });
-  app.register(datasetRoutes, { prefix: '/api/dataset' });
+  app.register(datasetRoutes, { prefix: '/api/datasets' });
 
   app.addHook('onClose', async () => {
     await closePool();

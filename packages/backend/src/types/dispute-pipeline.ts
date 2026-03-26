@@ -149,11 +149,26 @@ export interface PipelineRunInsert {
 // --- Dataset Builder types ---
 
 export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
+export type DatasetSourceType = 'preset' | 'case_ids' | 'custom_sql';
+
+export interface DatasetRow {
+  id: number;
+  name: string;
+  description: string | null;
+  source_type: DatasetSourceType;
+  source_config: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DatasetWithCounts extends DatasetRow {
+  total_cases: number;
+  labeled_cases: number;
+}
 
 export interface DatasetCaseRow {
   id: number;
+  dataset_id: number;
   case_id: number;
-  segment: string;
   pipeline_run_id: number | null;
   label: DatasetLabel | null;
   label_notes: string | null;
@@ -164,12 +179,4 @@ export interface DatasetCaseRow {
 
 export interface DatasetCaseWithRun extends DatasetCaseRow {
   pipeline_run: PipelineRunRow | null;
-}
-
-export interface SegmentInfo {
-  key: string;
-  label: string;
-  description: string;
-  labeled_count: number;
-  total_count: number;
 }

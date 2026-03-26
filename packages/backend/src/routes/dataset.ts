@@ -1,38 +1,33 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { SEGMENTS, fetchSegmentCaseIds } from '../services/dataset-segments.js';
+import { getPresets, runPresetQuery, runCustomSql } from '../services/dataset-segments.js';
 import { runDisputePipeline } from '../services/dispute-pipeline.js';
 import {
-  insertDatasetCase,
+  insertDataset,
+  listDatasets,
+  getDataset,
+  deleteDataset,
+  insertDatasetCases,
   listDatasetCases,
-  updateDatasetLabel,
+  updateDatasetCaseLabel,
+  updateDatasetCasePipelineRun,
   deleteDatasetCase,
-  getDatasetSegmentCounts,
-  getExistingDatasetCaseIds,
   getPipelineRunsByIds,
 } from '../services/db.js';
 import type { PipelineRunRow, DatasetCaseRow } from '../types/dispute-pipeline.js';
+
+const CreateDatasetSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().nullable().optional(),
+  sourceType: z.enum(['preset', 'case_ids', 'custom_sql']),
+  sourceConfig: z.record(z.unknown()),
+});
 
 const LabelSchema = z.object({
   label: z.enum(['credit', 'escalate', 'needs_more_info']),
   notes: z.string().nullable().optional(),
   labeledBy: z.string().nullable().optional(),
 });
-
-function formatDatasetCase(row: DatasetCaseRow, pipelineRun: PipelineRunRow | null) {
-  return {
-    id: row.id,
-    caseId: row.case_id,
-    segment: row.segment,
-    pipelineRunId: row.pipeline_run_id,
-    pipelineRun: pipelineRun ? formatPipelineRun(pipelineRun) : null,
-    label: row.label,
-    labelNotes: row.label_notes,
-    labeledBy: row.labeled_by,
-    labeledAt: row.labeled_at,
-    createdAt: row.created_at,
-  };
-}
 
 function formatPipelineRun(row: PipelineRunRow) {
   return {
@@ -61,6 +56,21 @@ function formatPipelineRun(row: PipelineRunRow) {
   };
 }
 
+function formatDatasetCase(row: DatasetCaseRow, pipelineRun: PipelineRunRow | null) {
+  return {
+    id: row.id,
+    datasetId: row.dataset_id,
+    caseId: row.case_id,
+    pipelineRunId: row.pipeline_run_id,
+    pipelineRun: pipelineRun ? formatPipelineRun(pipelineRun) : null,
+    label: row.label,
+    labelNotes: row.label_notes,
+    labeledBy: row.labeled_by,
+    labeledAt: row.labeled_at,
+    createdAt: row.created_at,
+  };
+}
+
 /**
  * Run promises with a concurrency limit.
  */
@@ -84,94 +94,169 @@ async function runWithConcurrency<T>(
 }
 
 export async function datasetRoutes(app: FastifyInstance) {
-  // GET /segments — List all segments with counts
-  app.get('/segments', async () => {
-    const counts = await getDatasetSegmentCounts();
-    const countMap = new Map(counts.map((c) => [c.segment, c]));
-
-    const segments = SEGMENTS.map((s) => ({
-      key: s.key,
-      label: s.label,
-      description: s.description,
-      totalCount: (countMap.get(s.key)?.total_count ?? 0),
-      labeledCount: (countMap.get(s.key)?.labeled_count ?? 0),
-    }));
-
-    return { data: segments };
+  // GET /presets — List available preset segment definitions
+  app.get('/presets', async () => {
+    return { data: getPresets() };
   });
 
-  // POST /segments/:segment/load — Fetch case IDs and run pipeline for each
-  app.post<{ Params: { segment: string } }>(
-    '/segments/:segment/load',
-    async (request, reply) => {
-      const { segment } = request.params;
-      const segmentDef = SEGMENTS.find((s) => s.key === segment);
-      if (!segmentDef) {
-        return reply.status(400).send({ error: `Unknown segment: ${segment}` });
-      }
+  // GET / — List all datasets with labeled/total counts
+  app.get('/', async () => {
+    const datasets = await listDatasets();
+    return {
+      data: datasets.map((d) => ({
+        id: d.id,
+        name: d.name,
+        description: d.description,
+        sourceType: d.source_type,
+        sourceConfig: d.source_config,
+        totalCases: d.total_cases,
+        labeledCases: d.labeled_cases,
+        createdAt: d.created_at,
+      })),
+    };
+  });
 
+  // POST / — Create dataset + resolve case IDs + run pipeline for each
+  app.post('/', async (request, reply) => {
+    try {
+      const body = CreateDatasetSchema.parse(request.body);
+
+      // Resolve case IDs based on source type
+      let caseIds: number[];
       try {
-        // Fetch case IDs from BigQuery
-        const caseIds = await fetchSegmentCaseIds(segment);
-        if (caseIds.length === 0) {
-          return { data: [], loaded: 0, skipped: 0 };
-        }
-
-        // Skip already-existing cases
-        const existing = await getExistingDatasetCaseIds(caseIds);
-        const newCaseIds = caseIds.filter((id) => !existing.has(id));
-
-        if (newCaseIds.length === 0) {
-          return { data: [], loaded: 0, skipped: caseIds.length };
-        }
-
-        // Run pipelines with concurrency limit of 3
-        const tasks = newCaseIds.map((caseId) => async () => {
-          try {
-            const pipelineRun = await runDisputePipeline(caseId);
-            const datasetCase = await insertDatasetCase(caseId, segment, pipelineRun.id);
-            return { success: true as const, case: formatDatasetCase(datasetCase, pipelineRun) };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return { success: false as const, caseId, error: message };
+        if (body.sourceType === 'preset') {
+          const presetKey = body.sourceConfig.preset_key;
+          if (typeof presetKey !== 'string') {
+            return reply.status(400).send({ error: 'source_config.preset_key must be a string' });
           }
-        });
-
-        const results = await runWithConcurrency(tasks, 3);
-
-        return {
-          data: results,
-          loaded: results.filter((r) => r.success).length,
-          skipped: existing.size,
-        };
-      } catch (error) {
-        if (error instanceof Error && (error.message.includes('BigQuery') || error.message.includes('query'))) {
-          return reply.status(502).send({ error: `Data fetch error: ${error.message}` });
+          caseIds = await runPresetQuery(presetKey);
+        } else if (body.sourceType === 'case_ids') {
+          const ids = body.sourceConfig.ids;
+          if (!Array.isArray(ids)) {
+            return reply.status(400).send({ error: 'source_config.ids must be an array' });
+          }
+          caseIds = ids.map((id) => {
+            const n = Number(id);
+            if (!Number.isInteger(n) || n <= 0) {
+              throw new Error(`Invalid case ID: ${id}`);
+            }
+            return n;
+          });
+        } else {
+          const sql = body.sourceConfig.sql;
+          if (typeof sql !== 'string') {
+            return reply.status(400).send({ error: 'source_config.sql must be a string' });
+          }
+          caseIds = await runCustomSql(sql);
         }
-        throw error;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.status(400).send({ error: `Failed to resolve case IDs: ${message}` });
       }
-    },
-  );
 
-  // GET /cases — List all dataset cases with pipeline run data
-  app.get<{ Querystring: { segment?: string } }>('/cases', async (request) => {
-    const segment = request.query.segment || undefined;
-    const cases = await listDatasetCases(segment);
+      if (caseIds.length === 0) {
+        return reply.status(400).send({ error: 'No case IDs resolved from source' });
+      }
 
-    // Fetch only the pipeline runs referenced by these dataset cases
-    const runIds = cases.map((c) => c.pipeline_run_id).filter((id): id is number => id !== null);
+      // Insert dataset row
+      const dataset = await insertDataset(
+        body.name,
+        body.description ?? null,
+        body.sourceType,
+        body.sourceConfig,
+      );
+
+      // Insert dataset_cases rows
+      const datasetCases = await insertDatasetCases(dataset.id, caseIds);
+
+      // Run pipelines in background with concurrency limit of 3
+      const tasks = datasetCases.map((dc) => async () => {
+        try {
+          const pipelineRun = await runDisputePipeline(dc.case_id);
+          await updateDatasetCasePipelineRun(dc.id, pipelineRun.id);
+        } catch (error) {
+          app.log.error(
+            { caseId: dc.case_id, datasetId: dataset.id, error },
+            'Pipeline run failed for dataset case',
+          );
+        }
+      });
+
+      // Fire and forget — frontend polls for completion
+      runWithConcurrency(tasks, 3).catch((error) => {
+        app.log.error({ datasetId: dataset.id, error }, 'Background pipeline batch failed');
+      });
+
+      return reply.status(201).send({
+        id: dataset.id,
+        name: dataset.name,
+        description: dataset.description,
+        sourceType: dataset.source_type,
+        sourceConfig: dataset.source_config,
+        totalCases: datasetCases.length,
+        labeledCases: 0,
+        createdAt: dataset.created_at,
+        status: 'loading',
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      throw error;
+    }
+  });
+
+  // GET /:id — Get dataset with all cases and pipeline run data
+  app.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+
+    const dataset = await getDataset(id);
+    if (!dataset) {
+      return reply.status(404).send({ error: 'Dataset not found' });
+    }
+
+    const cases = await listDatasetCases(id);
+
+    // Fetch pipeline runs for all cases that have one
+    const runIds = cases.map((c) => c.pipeline_run_id).filter((rid): rid is number => rid !== null);
     const pipelineRuns = await getPipelineRunsByIds(runIds);
     const runMap = new Map(pipelineRuns.map((r) => [r.id, r]));
 
-    const data = cases.map((c) => {
+    const formattedCases = cases.map((c) => {
       const pipelineRun = c.pipeline_run_id ? (runMap.get(c.pipeline_run_id) ?? null) : null;
       return formatDatasetCase(c, pipelineRun);
     });
 
-    return { data };
+    return {
+      id: dataset.id,
+      name: dataset.name,
+      description: dataset.description,
+      sourceType: dataset.source_type,
+      sourceConfig: dataset.source_config,
+      createdAt: dataset.created_at,
+      totalCases: cases.length,
+      labeledCases: cases.filter((c) => c.label !== null).length,
+      cases: formattedCases,
+    };
   });
 
-  // PATCH /cases/:id/label — Save label for a case
+  // DELETE /:id — Delete dataset and all its cases
+  app.delete<{ Params: { id: string } }>('/:id', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+    const count = await deleteDataset(id);
+    if (count === 0) {
+      return reply.status(404).send({ error: 'Dataset not found' });
+    }
+    return { success: true };
+  });
+
+  // PATCH /cases/:id/label — Save label, notes, labeled_by
   app.patch<{ Params: { id: string } }>('/cases/:id/label', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) {
@@ -180,7 +265,7 @@ export async function datasetRoutes(app: FastifyInstance) {
 
     try {
       const body = LabelSchema.parse(request.body);
-      const row = await updateDatasetLabel(id, body.label, body.notes ?? null, body.labeledBy ?? null);
+      const row = await updateDatasetCaseLabel(id, body.label, body.notes ?? null, body.labeledBy ?? null);
       if (!row) {
         return reply.status(404).send({ error: 'Dataset case not found' });
       }
@@ -193,7 +278,7 @@ export async function datasetRoutes(app: FastifyInstance) {
     }
   });
 
-  // DELETE /cases/:id — Remove a case from the dataset
+  // DELETE /cases/:id — Remove a case from dataset
   app.delete<{ Params: { id: string } }>('/cases/:id', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) {

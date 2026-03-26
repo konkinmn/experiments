@@ -263,7 +263,15 @@ export async function deleteJob(id: string): Promise<number> {
 
 // --- Dispute Pipeline Runs ---
 
-import type { PipelineRunRow, PipelineRunInsert, DatasetCaseRow, DatasetLabel } from '../types/dispute-pipeline.js';
+import type {
+  PipelineRunRow,
+  PipelineRunInsert,
+  DatasetRow,
+  DatasetWithCounts,
+  DatasetCaseRow,
+  DatasetLabel,
+  DatasetSourceType,
+} from '../types/dispute-pipeline.js';
 
 export type { PipelineRunRow };
 
@@ -342,50 +350,99 @@ export async function deletePipelineRun(id: number): Promise<number> {
   return result.rowCount ?? 0;
 }
 
-// --- Dataset Cases ---
+// --- Datasets ---
 
-export async function insertDatasetCase(
-  caseId: number,
-  segment: string,
-  pipelineRunId: number | null,
-): Promise<DatasetCaseRow> {
+export async function insertDataset(
+  name: string,
+  description: string | null,
+  sourceType: DatasetSourceType,
+  sourceConfig: Record<string, unknown>,
+): Promise<DatasetRow> {
   await ensureMigrations();
   const pool = getPool();
-  const { rows } = await pool.query<DatasetCaseRow>(
-    `INSERT INTO dataset_cases (case_id, segment, pipeline_run_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (case_id) DO NOTHING
+  const { rows } = await pool.query<DatasetRow>(
+    `INSERT INTO datasets (name, description, source_type, source_config)
+     VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [caseId, segment, pipelineRunId],
+    [name, description, sourceType, JSON.stringify(sourceConfig)],
   );
-  // If ON CONFLICT hit, return the existing row
-  if (!rows[0]) {
-    const { rows: existing } = await pool.query<DatasetCaseRow>(
-      `SELECT * FROM dataset_cases WHERE case_id = $1`,
-      [caseId],
-    );
-    return existing[0]!;
-  }
+  if (!rows[0]) throw new Error('Insert did not return a row');
   return rows[0];
 }
 
-export async function listDatasetCases(segment?: string): Promise<DatasetCaseRow[]> {
+export async function listDatasets(): Promise<DatasetWithCounts[]> {
   await ensureMigrations();
   const pool = getPool();
-  if (segment) {
-    const { rows } = await pool.query<DatasetCaseRow>(
-      `SELECT * FROM dataset_cases WHERE segment = $1 ORDER BY created_at DESC`,
-      [segment],
-    );
-    return rows;
+  const { rows } = await pool.query<DatasetRow & { total_cases: string; labeled_cases: string }>(
+    `SELECT d.*,
+            COUNT(dc.id)::text AS total_cases,
+            COUNT(dc.label)::text AS labeled_cases
+     FROM datasets d
+     LEFT JOIN dataset_cases dc ON dc.dataset_id = d.id
+     GROUP BY d.id
+     ORDER BY d.created_at DESC`,
+  );
+  return rows.map((r) => ({
+    ...r,
+    total_cases: parseInt(r.total_cases, 10),
+    labeled_cases: parseInt(r.labeled_cases, 10),
+  }));
+}
+
+export async function getDataset(id: number): Promise<DatasetRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetRow>(
+    `SELECT * FROM datasets WHERE id = $1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteDataset(id: number): Promise<number> {
+  await ensureMigrations();
+  const pool = getPool();
+  const result = await pool.query('DELETE FROM datasets WHERE id = $1', [id]);
+  return result.rowCount ?? 0;
+}
+
+// --- Dataset Cases ---
+
+export async function insertDatasetCases(
+  datasetId: number,
+  caseIds: number[],
+): Promise<DatasetCaseRow[]> {
+  if (caseIds.length === 0) return [];
+  await ensureMigrations();
+  const pool = getPool();
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+  let idx = 1;
+  for (const caseId of caseIds) {
+    placeholders.push(`($${idx++}, $${idx++})`);
+    values.push(datasetId, caseId);
   }
   const { rows } = await pool.query<DatasetCaseRow>(
-    `SELECT * FROM dataset_cases ORDER BY created_at DESC`,
+    `INSERT INTO dataset_cases (dataset_id, case_id)
+     VALUES ${placeholders.join(', ')}
+     ON CONFLICT (dataset_id, case_id) DO NOTHING
+     RETURNING *`,
+    values,
   );
   return rows;
 }
 
-export async function updateDatasetLabel(
+export async function listDatasetCases(datasetId: number): Promise<DatasetCaseRow[]> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetCaseRow>(
+    `SELECT * FROM dataset_cases WHERE dataset_id = $1 ORDER BY created_at DESC`,
+    [datasetId],
+  );
+  return rows;
+}
+
+export async function updateDatasetCaseLabel(
   id: number,
   label: DatasetLabel,
   notes: string | null,
@@ -403,45 +460,23 @@ export async function updateDatasetLabel(
   return rows[0] ?? null;
 }
 
+export async function updateDatasetCasePipelineRun(
+  id: number,
+  pipelineRunId: number,
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE dataset_cases SET pipeline_run_id = $1 WHERE id = $2`,
+    [pipelineRunId, id],
+  );
+}
+
 export async function deleteDatasetCase(id: number): Promise<number> {
   await ensureMigrations();
   const pool = getPool();
   const result = await pool.query('DELETE FROM dataset_cases WHERE id = $1', [id]);
   return result.rowCount ?? 0;
-}
-
-export async function getDatasetSegmentCounts(): Promise<
-  Array<{ segment: string; total_count: number; labeled_count: number }>
-> {
-  await ensureMigrations();
-  const pool = getPool();
-  const { rows } = await pool.query<{
-    segment: string;
-    total_count: string;
-    labeled_count: string;
-  }>(
-    `SELECT segment,
-            COUNT(*)::text AS total_count,
-            COUNT(label)::text AS labeled_count
-     FROM dataset_cases
-     GROUP BY segment`,
-  );
-  return rows.map((r) => ({
-    segment: r.segment,
-    total_count: parseInt(r.total_count, 10),
-    labeled_count: parseInt(r.labeled_count, 10),
-  }));
-}
-
-export async function getExistingDatasetCaseIds(caseIds: number[]): Promise<Set<number>> {
-  if (caseIds.length === 0) return new Set();
-  await ensureMigrations();
-  const pool = getPool();
-  const { rows } = await pool.query<{ case_id: number }>(
-    `SELECT case_id FROM dataset_cases WHERE case_id = ANY($1)`,
-    [caseIds],
-  );
-  return new Set(rows.map((r) => r.case_id));
 }
 
 export async function closePool(): Promise<void> {

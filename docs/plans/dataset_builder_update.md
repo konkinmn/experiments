@@ -141,7 +141,7 @@ LIMIT 30
 
 ### Task 3: Backend — dataset API routes
 
-- [ ] Create `packages/backend/src/routes/dataset.ts`
+- [x] Create `packages/backend/src/routes/dataset.ts`
 
 Endpoints:
 
@@ -166,10 +166,10 @@ Endpoints:
 5. Run pipelines in background — concurrency limit 3, save pipeline_run_id back to dataset_cases as each completes
 6. Return dataset immediately with `status: 'loading'` — frontend polls until all pipeline_run_ids are populated
 
-- [ ] Add DB functions to `db.ts`: `insertDataset`, `listDatasets`, `getDataset`, `deleteDataset`, `insertDatasetCases`, `updateDatasetCaseLabel`, `updateDatasetCasePipelineRun`, `deleteDatasetCase`
-- [ ] Register route in `app.ts`
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Add DB functions to `db.ts`: `insertDataset`, `listDatasets`, `getDataset`, `deleteDataset`, `insertDatasetCases`, `updateDatasetCaseLabel`, `updateDatasetCasePipelineRun`, `deleteDatasetCase`
+- [x] Register route in `app.ts`
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
