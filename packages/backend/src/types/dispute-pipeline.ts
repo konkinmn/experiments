@@ -145,3 +145,31 @@ export interface PipelineRunInsert {
   dialogue_messages: DialogueMessage[] | null;
   enrichment_metadata: Record<string, unknown> | null;
 }
+
+// --- Dataset Builder types ---
+
+export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
+
+export interface DatasetCaseRow {
+  id: number;
+  case_id: number;
+  segment: string;
+  pipeline_run_id: number | null;
+  label: DatasetLabel | null;
+  label_notes: string | null;
+  labeled_by: string | null;
+  labeled_at: string | null;
+  created_at: string;
+}
+
+export interface DatasetCaseWithRun extends DatasetCaseRow {
+  pipeline_run: PipelineRunRow | null;
+}
+
+export interface SegmentInfo {
+  key: string;
+  label: string;
+  description: string;
+  labeled_count: number;
+  total_count: number;
+}

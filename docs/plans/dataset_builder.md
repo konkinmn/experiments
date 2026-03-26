@@ -121,7 +121,7 @@ LIMIT 20
 
 ### Task 3: Backend — dataset API routes
 
-- [ ] Create `packages/backend/src/routes/dataset.ts` with these endpoints:
+- [x] Create `packages/backend/src/routes/dataset.ts` with these endpoints:
 
 | Method | Path | Description |
 |---|---|---|
@@ -131,12 +131,12 @@ LIMIT 20
 | `PATCH` | `/api/dataset/cases/:id/label` | Save label (credit/escalate/needs_more_info), notes, labeled_by |
 | `DELETE` | `/api/dataset/cases/:id` | Remove a case from the dataset |
 
-- [ ] `POST /load` runs pipelines in parallel with concurrency limit of 3 (avoid BQ rate limits)
-- [ ] If a case_id already exists in `dataset_cases`, skip it (don't re-run pipeline)
-- [ ] Register route in `app.ts`
-- [ ] Add DB functions to `db.ts`: `insertDatasetCase`, `listDatasetCases`, `updateDatasetLabel`, `deleteDatasetCase`
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] `POST /load` runs pipelines in parallel with concurrency limit of 3 (avoid BQ rate limits)
+- [x] If a case_id already exists in `dataset_cases`, skip it (don't re-run pipeline)
+- [x] Register route in `app.ts`
+- [x] Add DB functions to `db.ts`: `insertDatasetCase`, `listDatasetCases`, `updateDatasetLabel`, `deleteDatasetCase`
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
