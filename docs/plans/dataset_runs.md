@@ -259,20 +259,20 @@ On submit: `POST /api/datasets/:id/runs` with full config. Modal closes, new tab
 
 ### Task 8: Frontend hooks and API
 
-- [ ] Add to `api.ts`:
+- [x] Add to `api.ts`:
   - `getRunOptions()`
   - `createDatasetRun(datasetId, config)`
   - `getDatasetRuns(datasetId)`
   - `getDatasetRunCases(runId)`
 
-- [ ] Add to `useDatasetBuilder.ts`:
+- [x] Add to `useDatasetBuilder.ts`:
   - `useRunOptions()` — query
   - `useCreateRun()` — mutation, invalidates dataset runs
   - `useDatasetRuns(datasetId)` — query
   - `useDatasetRunCases(runId)` — query, polls every 3s if run status is pending/running
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
