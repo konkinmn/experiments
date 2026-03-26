@@ -251,6 +251,7 @@ const NON_CUSTOMER_SENDER_TYPES = new Set([
   'system', 'SYSTEM',
   'annabot', 'ANNABOT',
   'bot', 'BOT',
+  'unknown', 'UNKNOWN',
 ]);
 
 function filterCustomerMessages(messages: DialogueMessage[]): DialogueMessage[] {
@@ -375,11 +376,16 @@ async function callPlanner(
     { role: 'system' as const, content: prompt.content },
     { role: 'user' as const, content: JSON.stringify(signalsPayload, null, 2) },
   ];
+  // Log planner request with customer dialogue content redacted to avoid PII in logs
+  const redactedPayload = { ...signalsPayload };
+  if (redactedPayload.customer_dialogue_messages) {
+    redactedPayload.customer_dialogue_messages = (redactedPayload.customer_dialogue_messages as unknown[]).map(() => '[REDACTED]');
+  }
   console.log('[Planner] Full LLM request:', JSON.stringify({
-    messages: plannerMessages.map(m => ({
-      role: m.role,
-      content: m.role === 'user' ? m.content : `[system prompt, ${m.content.length} chars]`,
-    })),
+    messages: [
+      { role: 'system', content: `[system prompt, ${plannerMessages[0].content.length} chars]` },
+      { role: 'user', content: JSON.stringify(redactedPayload, null, 2) },
+    ],
     provider: 'ANTHROPIC',
     model: process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929',
   }, null, 2));
@@ -412,13 +418,14 @@ async function callPlanner(
 export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow> {
   const start = Date.now();
 
-  // Layer 0: Fetch signals + case details in parallel
-  const [rawSignals, caseDetails] = await Promise.all([
+  // Layer 0: Fetch signals + case details + case actions in parallel
+  const [rawSignals, caseDetails, caseActions] = await Promise.all([
     fetchCaseSignals(caseId),
     fetchCaseDetails(caseId).catch((err) => {
       console.warn(`Failed to fetch case details for ${caseId}:`, err.message);
       return null;
     }),
+    fetchCaseActions(caseId),
   ]);
 
   // Build dispute profile
@@ -430,7 +437,6 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
 
   let plannerOutput: PlannerOutput | null = null;
   let plannerRawResponse: string | null = null;
-  let caseActions: CaseAction[] = [];
 
   if (!triggeredGate) {
     // Collect FILE and DIALOGUE artifact IDs from case artifacts
@@ -453,16 +459,17 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
         return art.artifact_id ?? String(art.id);
       });
 
-    // Run all three enrichments in parallel
-    const [caseActionsResult, dialogueMessagesResult, parsedFileDescriptions] = await Promise.all([
-      fetchCaseActions(caseId),
+    // Run dialogue and file enrichments in parallel
+    const [dialogueMessagesResult, parsedFileDescriptions] = await Promise.all([
       fetchCaseDialogues(dialogueArtifactIds),
       fetchAndParseFileArtifacts(fileArtifacts),
     ]);
-    caseActions = caseActionsResult;
-    const customerDialogueMessages = filterCustomerMessages(dialogueMessagesResult);
+    const allCustomerMessages = filterCustomerMessages(dialogueMessagesResult);
+    // Limit dialogue messages to avoid exceeding LLM token limits
+    const MAX_DIALOGUE_MESSAGES = 50;
+    const customerDialogueMessages = allCustomerMessages.slice(-MAX_DIALOGUE_MESSAGES);
 
-    console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialogueMessagesResult.length} (customer: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);
+    console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialogueMessagesResult.length} (customer: ${allCustomerMessages.length}, sent to planner: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);
 
     // Layer 2: Planner
     try {

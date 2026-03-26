@@ -265,8 +265,8 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
         if (messageRecords.length === 0) continue;
 
         // Step 3: Get message content from chat service
-        const messageIdParams = messageRecords.map((m) => `id[]=${m.id}`).join('&');
-        const chatUrl = `${CHAT_BASE_URL}/api/2/user/${dialogue.alias}/messages?${messageIdParams}`;
+        const messageIdParams = messageRecords.map((m) => `id[]=${encodeURIComponent(m.id)}`).join('&');
+        const chatUrl = `${CHAT_BASE_URL}/api/2/user/${encodeURIComponent(dialogue.alias)}/messages?${messageIdParams}`;
         const chatResponse = await fetch(chatUrl, {
           headers: {
             Authorization: `Bearer ${API_TOKEN}`,
