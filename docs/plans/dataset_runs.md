@@ -102,8 +102,8 @@ interface DatasetRunCase {
 
 ### Task 3: Backend — available prompts endpoint
 
-- [ ] In `packages/backend/src/services/prompts.ts`, add `listPrompts(): string[]` — scans the prompts directory, returns all `.md` filenames without extension (e.g. `['dispute-planner-v1', 'dispute-planner-v2']`)
-- [ ] Add `GET /api/datasets/run-options` endpoint returning:
+- [x] In `packages/backend/src/services/prompts.ts`, add `listPrompts(): string[]` — scans the prompts directory, returns all `.md` filenames without extension (e.g. `['dispute-planner-v1', 'dispute-planner-v2']`)
+- [x] Add `GET /api/datasets/run-options` endpoint returning:
 
 ```typescript
 {
@@ -121,8 +121,8 @@ claude-opus-4-6
 gemini-2.5-flash
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 

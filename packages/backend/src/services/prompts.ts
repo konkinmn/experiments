@@ -32,6 +32,11 @@ export async function getPromptsList(): Promise<Prompt[]> {
   }));
 }
 
+export async function listPrompts(): Promise<string[]> {
+  const files = await readdir(PROMPTS_DIR);
+  return files.filter((f) => f.endsWith('.md')).map((f) => f.replace('.md', ''));
+}
+
 export async function getPromptById(id: string): Promise<PromptWithContent | null> {
   const filename = `${id}.md`;
   const filepath = join(PROMPTS_DIR, filename);

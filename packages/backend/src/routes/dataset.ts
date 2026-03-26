@@ -17,6 +17,8 @@ import {
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
 import type { PipelineRunRow, DatasetCaseRow, DatasetRow } from '../types/dispute-pipeline.js';
+import { DEFAULT_RUBRIC_WEIGHTS } from '../services/dispute-pipeline.js';
+import { listPrompts } from '../services/prompts.js';
 
 const CreateDatasetSchema = z.object({
   name: z.string().min(1),
@@ -82,7 +84,24 @@ async function runWithConcurrency<T>(
   return results;
 }
 
+const SUPPORTED_MODELS = [
+  'claude-sonnet-4-5@20250929',
+  'claude-sonnet-4-6',
+  'claude-opus-4-6',
+  'gemini-2.5-flash',
+];
+
 export async function datasetRoutes(app: FastifyInstance) {
+  // GET /run-options — Available models, prompts, and default rubric weights
+  app.get('/run-options', async () => {
+    const prompts = await listPrompts();
+    return {
+      models: SUPPORTED_MODELS,
+      prompts,
+      default_rubric: DEFAULT_RUBRIC_WEIGHTS,
+    };
+  });
+
   // GET / — List all datasets with labeled/total counts
   app.get('/', async () => {
     const datasets = await listDatasets();
