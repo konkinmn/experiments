@@ -766,7 +766,7 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
             1)::text AS agreement_rate,
             ROUND(
               100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label = 'credit' THEN 1 ELSE 0 END)
-              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' THEN 1 ELSE 0 END), 0),
+              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
             1)::text AS credit_precision,
             ROUND(
               100.0 * SUM(CASE WHEN dc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
