@@ -84,7 +84,27 @@ export interface PipelineResult {
   executorAction: string;
   pipelineDurationMs: number;
   promptVersion: string | null;
-  evidenceArtifacts: unknown | null;
+  plannerRawResponse: string | null;
+  plannerRequest: Record<string, unknown> | null;
+  plannerSystemPrompt: string | null;
+  fileParseResults: string[] | null;
+  dialogueMessages: Array<{ role: string; content: string; created_at: string }> | null;
+  enrichmentMetadata: {
+    dialogues_requested?: number;
+    dialogues_found?: number;
+    dialogues_with_messages?: number;
+    chat_fetch_failures?: Array<{
+      dialogue_id: number;
+      alias: string;
+      status: number;
+      error_body: string;
+    }>;
+    total_messages_fetched?: number;
+    customer_messages_filtered?: number;
+    customer_messages_sent_to_planner?: number;
+    file_artifacts_found?: number;
+    file_descriptions_parsed?: number;
+  } | null;
   reviewerVerdict: 'correct' | 'incorrect' | null;
   reviewerNotes: string | null;
   reviewedAt: string | null;

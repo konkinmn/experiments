@@ -81,19 +81,19 @@ Case ID entered
       ↓
 POST /api/dispute-pipeline/run
       ↓
-Parallel fetch: BQ signals + Case API details
+Parallel fetch: BQ signals + Case API details + Case actions (Tasks API)
       ↓
 Hard gate check
       ↓ (if clear)
 Build dispute profile (rubric score + risk level)
       ↓
-Fetch + base64 encode FILE artifacts
+Parallel enrichment:
+  FILE artifacts → base64 encode → Gemini parse → text descriptions
+  DIALOGUE artifact IDs → Tasks API → Chat API → customer messages (filtered, last 50)
       ↓
-Pre-parse each file with Google Gemini → text descriptions
+Planner LLM call (profile + case_actions + customer_dialogue_messages + artifact_descriptions)
       ↓
-Planner LLM call (profile + artifact descriptions as text context)
-      ↓
-Save full audit record to PostgreSQL
+Save full audit record to PostgreSQL (including case_actions as JSONB)
       ↓
 Return result to frontend
       ↓
@@ -106,16 +106,18 @@ Reviewer marks correct / incorrect + notes
 
 ---
 
-### 3. Case artifact handling
+### 3. Case artifact and enrichment handling
 
-**Allowed artifact types:**
+**Data sources passed to Planner:**
 
 | Type | Format | Processing |
 |---|---|---|
 | `FILE` (PDF) | PDF | Fetched as base64, pre-parsed with Google Gemini → text description |
 | `FILE` (image) | Image (screenshot) | Fetched as base64, pre-parsed with Google Gemini → text description |
+| `CASE_ACTION` | JSON (structured) | Fetched from Tasks API by case ID. No Gemini needed — already structured data |
+| `DIALOGUE` | JSON (chat messages) | Fetched via 3-step Tasks + Chat API flow. Filtered to customer-only, capped at 50. No Gemini needed |
 
-All other types stripped before Planner call.
+All other types (`AGENT_TASK`, `TRANSACTION`, `CALL`) are not passed to the Planner.
 
 **File fetch and parse flow:**
 ```
@@ -138,7 +140,37 @@ Fetched in parallel with BQ signals. Each file is parsed individually with Gemin
 
 This follows the anna-gemma `parse_file` pattern: Gemini handles multimodal file understanding, the Planner (Anthropic Claude) receives text-only input.
 
-**Env vars required:** `FILE_SHARE_BASE_URL`, `MEDIA_BASE_URL`
+**Case action fetch flow:**
+```
+GET {TASKS_BASE_URL}/api/workstation/case-actions?case_id={caseId}
+        ↓
+response.data → CaseAction[]
+        ↓
+Passed to Planner as case_actions (action_type, status, created_at, metadata)
+```
+
+On failure: log warning, return empty array — do not fail the pipeline.
+
+**Dialogue message fetch flow (3-step):**
+```
+DIALOGUE artifact IDs from case artifacts
+        ↓
+Step 1: GET {TASKS_BASE_URL}/api/v3/dialogues?id={ids} → get dialogue records + alias
+        ↓
+Step 2: GET {TASKS_BASE_URL}/api/v3/messages?dialogue_id={id} → get message IDs per dialogue
+        ↓
+Step 3: GET {CHAT_BASE_URL}/api/2/user/{alias}/messages?id[]={id1}&id[]={id2}... → get message content
+        ↓
+Filter: hidden messages removed, non-customer sender types (agent, system, annabot, bot, unknown) removed
+        ↓
+Sort by created_at, cap at last 50 → customer_dialogue_messages in Planner payload
+```
+
+On any individual dialogue failure: log warning, skip that dialogue — do not fail the pipeline. Customer dialogue content is redacted in pipeline logs to avoid PII exposure.
+
+CASE_ACTION and DIALOGUE data are already structured text — they bypass Gemini entirely.
+
+**Env vars required:** `FILE_SHARE_BASE_URL`, `MEDIA_BASE_URL`, `TASKS_BASE_URL`, `CHAT_BASE_URL`
 
 ---
 
@@ -169,6 +201,11 @@ Two decisions only. `request_evidence`, `chargeback`, `on_notification`, `on_win
 FraudType: `LOST_CARD_FRAUD` | `STOLEN_CARD_FRAUD` | `COUNTERFEIT_CARD_FRAUD` | `ACCOUNT_TAKEOVER_FRAUD` | `CARD_NOT_PRESENT_FRAUD` | `BUST_OUT_COLLUSIVE_MERCHANT` | `FIRST_PARTY` | `MODIFICATION_OF_PAYMENT_ORDER` | `MANIPULATION_OF_CARDHOLDER` | `PAYMENT_CREATED_BY_FRAUDSTER` | `MANIPULATION_OF_PAYER_BY_FRAUDSTER`
 
 FraudSubType: `CONVENIENCE_OR_BALANCE_TRANSFER` | `PIN_NOT_USED` | `PIN_USED` | `UNKNOWN` | `ADVANCE_FEE` | `IMPERSONATION` | `INVESTMENT` | `PURCHASE` | `ROMANCE`
+
+**Planner receives three enrichment sections (when available):**
+- `case_actions` — structured action records (e.g. DISPUTE_FORM_FILLED with crime_ref_number). Planner is instructed to use `crime_ref_number` as `args.crime_reference` when crediting.
+- `customer_dialogue_messages` — customer's own chat messages (agent/system/bot filtered out). Used as context, not as authoritative evidence.
+- `artifact_descriptions` — Gemini-extracted text summaries of FILE artifacts
 
 **Key prompt constraints:**
 - Tier C, D, E are all eligible — only Tier B indicates unestablished customer
@@ -219,6 +256,12 @@ If no: escalate immediately, attach full Planner output and executor error.
 
 ---
 
+### 8. Audit schema — case_actions column
+
+`case_actions` is persisted as a JSONB column in `dispute_pipeline_runs` for audit trail. Migration: `init-db/004-case-actions-column.sql`. Runtime migration also applied in `db.ts` on startup.
+
+---
+
 ## Eval metrics — Phase 1
 
 | Metric | Target before expanding live cohort |
@@ -252,6 +295,11 @@ Minimum sample before going live: 30 shadow cases within the narrow cohort, all 
 - ✅ Artifact types audited and restricted to FILE only (DISPUTE_FORM metadata lives on disputes service, not file-share; the dispute form PDF is a FILE artifact)
 - ✅ File fetch flow designed (file-share → media service → base64)
 - ✅ File pre-parsing with Google Gemini (follows anna-gemma parse_file pattern)
+- ✅ CASE_ACTION enrichment: fetchCaseActions via Tasks API, crime_ref_number extraction from DISPUTE_FORM_FILLED metadata
+- ✅ DIALOGUE enrichment: fetchCaseDialogues via Tasks + Chat APIs, customer-only filtering (agent/system/bot removed), capped at last 50
+- ✅ Planner prompt updated with `case_actions` and `customer_dialogue_messages` guidance sections
+- ✅ Integration test (case 29452) verifying CASE_ACTION + DIALOGUE enrichment end-to-end
+- ✅ DB migration for case_actions JSONB column (init-db/004-case-actions-column.sql)
 
 ---
 

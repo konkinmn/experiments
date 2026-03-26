@@ -177,6 +177,78 @@ check(
   `${result.pipeline_duration_ms}ms`,
 );
 
+// --- Check 7: CASE_ACTION with DISPUTE_FORM_FILLED and crime_ref_number ---
+const caseActionsData = result.case_actions ?? [];
+const disputeFormAction = caseActionsData.find(
+  (a) => a.action_type === 'DISPUTE_FORM_FILLED',
+);
+check(
+  'CASE_ACTION DISPUTE_FORM_FILLED fetched',
+  disputeFormAction != null,
+  disputeFormAction
+    ? `action_type=${disputeFormAction.action_type}, status=${disputeFormAction.status}`
+    : 'No DISPUTE_FORM_FILLED action found',
+);
+check(
+  'crime_ref_number is RF26020134020C',
+  disputeFormAction?.metadata?.crime_ref_number === 'RF26020134020C',
+  `crime_ref_number=${disputeFormAction?.metadata?.crime_ref_number ?? 'missing'}`,
+);
+
+// --- Check 8: Customer dialogue messages were present in Planner context ---
+// Dialogue messages are not saved in the result, but the planner_raw_response or thought
+// should show evidence that dialogue context was available.
+// We check the thought for any reference to customer messages/dialogue/claim.
+const dialogueReferencePatterns = [
+  /\bcustomer\b/i, /\bdialogue\b/i, /\bchat\b/i, /\bmessage/i,
+  /\bclaim/i, /\breport/i, /\bstated\b/i, /\bsaid\b/i, /\bexplain/i,
+];
+const referencesDialogue = dialogueReferencePatterns.some((re) => re.test(thought));
+check(
+  'Planner thought references customer dialogue',
+  referencesDialogue,
+  referencesDialogue
+    ? 'Planner references customer messages in thought'
+    : 'No dialogue reference found in thought',
+);
+
+// --- Check 9: Planner thought references crime reference number ---
+const crimeRefPattern = /RF26020134020C/i;
+const thoughtReferencesCrimeRef = crimeRefPattern.test(thought);
+check(
+  'Planner thought references crime reference number',
+  thoughtReferencesCrimeRef,
+  thoughtReferencesCrimeRef
+    ? 'RF26020134020C found in thought'
+    : `Not found in thought. Snippet: "${thought.substring(0, 200)}..."`,
+);
+
+// --- Check 10: Planner args.crime_reference is populated ---
+const crimeReference = plannerOutput?.args?.crime_reference;
+check(
+  'Planner args.crime_reference = RF26020134020C',
+  crimeReference === 'RF26020134020C',
+  `crime_reference=${crimeReference ?? 'missing/absent (decision=' + plannerOutput?.decision + ')'}`,
+);
+
+// --- Check 11: Decision is credit or well-reasoned escalation (NOT missing crime ref) ---
+const decision = plannerOutput?.decision;
+const isMissingCrimeRefEscalation =
+  decision === 'escalate_to_agent' &&
+  (/missing.*crime\s*ref/i.test(thought) ||
+   /no.*crime\s*ref/i.test(thought) ||
+   /crime\s*ref.*not\s*(provided|found|present|available)/i.test(thought) ||
+   /without.*crime\s*ref/i.test(thought));
+check(
+  'Decision is credit or NOT escalation-due-to-missing-crime-ref',
+  decision === 'credit' || !isMissingCrimeRefEscalation,
+  decision === 'credit'
+    ? `Decision is credit`
+    : isMissingCrimeRefEscalation
+      ? `PROBLEM: Escalation due to missing crime reference despite it being available`
+      : `Escalation for other reason (acceptable)`,
+);
+
 // --- Summary ---
 const passed = checks.filter((c) => c.passed).length;
 const failed = checks.filter((c) => !c.passed).length;

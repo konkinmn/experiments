@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Check, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ChevronDown, ChevronRight, Trash2, Check, X, AlertTriangle, MessageSquare, FileText, Code, BookOpen, Terminal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +51,45 @@ const RAW_SIGNAL_LABELS: Record<keyof CaseSignalsRaw, string> = {
   railsr_disputes_last_6_months: 'Railsr Disputes (6 months)',
   railsr_disputes_last_30_days: 'Railsr Disputes (30 days)',
 };
+
+// Rubric scoring rules — must match backend computeRubricScore()
+const TIER_POINTS: Record<string, number> = { E: 10, D: 8, C: 5 };
+
+function accountAgePts(days: number): number {
+  if (days >= 365) return 20;
+  if (days >= 180) return 12;
+  if (days >= 90) return 5;
+  return 0;
+}
+
+function trustScorePts(score: string | null): number {
+  const s = score?.toUpperCase();
+  if (s === 'GREEN') return 8;
+  if (s === 'BLUE') return 4;
+  return 0;
+}
+
+function disputes6mPts(count: number): number {
+  if (count === 0) return 30;
+  if (count <= 2) return 15;
+  if (count <= 4) return 5;
+  return 0;
+}
+
+function maxTxnPts(amount: number): number {
+  if (amount < 5) return 20;
+  if (amount < 10) return 14;
+  if (amount < 15) return 9;
+  if (amount <= 25) return 5;
+  return 0;
+}
+
+interface ChatFetchFailure {
+  dialogue_id: number;
+  alias: string;
+  status: number;
+  error_body: string;
+}
 
 function SignalRow({ label, value, pts }: { label: string; value: string; pts?: number }) {
   return (
@@ -159,7 +198,14 @@ function ExpandedDetail({
   onReview?: (id: number, verdict: 'correct' | 'incorrect', notes?: string) => void;
 }) {
   const [reviewNotes, setReviewNotes] = useState(result.reviewerNotes ?? '');
+  useEffect(() => { setReviewNotes(result.reviewerNotes ?? ''); }, [result.reviewerNotes]);
   const [showRawData, setShowRawData] = useState(false);
+  const [showEnrichment, setShowEnrichment] = useState(false);
+  const [showDialogue, setShowDialogue] = useState(false);
+  const [showFileResults, setShowFileResults] = useState(false);
+  const [showPlannerRequest, setShowPlannerRequest] = useState(false);
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [showRawResponse, setShowRawResponse] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -277,18 +323,18 @@ function ExpandedDetail({
         <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
           {/* Left column — Account signals */}
           <div className="space-y-1">
-            <SignalRow label="Account Age" value={`${result.disputeProfile.account_age_days} days`} pts={result.disputeProfile.account_age_days >= 365 ? 20 : result.disputeProfile.account_age_days >= 180 ? 12 : result.disputeProfile.account_age_days >= 90 ? 5 : 0} />
-            <SignalRow label="Tier" value={result.disputeProfile.tier_name ?? '—'} pts={({'E':10,'D':8,'C':5} as Record<string,number>)[result.disputeProfile.tier_name?.toUpperCase() ?? ''] ?? 0} />
+            <SignalRow label="Account Age" value={`${result.disputeProfile.account_age_days} days`} pts={accountAgePts(result.disputeProfile.account_age_days)} />
+            <SignalRow label="Tier" value={result.disputeProfile.tier_name ?? '—'} pts={TIER_POINTS[result.disputeProfile.tier_name?.toUpperCase() ?? ''] ?? 0} />
             <SignalRow label="Money Maker" value={result.disputeProfile.is_money_maker ? 'Yes' : 'No'} pts={result.disputeProfile.is_money_maker ? 15 : 0} />
-            <SignalRow label="Trust Score" value={result.disputeProfile.trust_score ?? '—'} pts={result.disputeProfile.trust_score?.toUpperCase() === 'GREEN' ? 8 : result.disputeProfile.trust_score?.toUpperCase() === 'BLUE' ? 4 : 0} />
+            <SignalRow label="Trust Score" value={result.disputeProfile.trust_score ?? '—'} pts={trustScorePts(result.disputeProfile.trust_score)} />
             <SignalRow label="Txns (90d)" value={String(result.rawSignals.tx_count_90_days)} pts={result.rawSignals.tx_count_90_days >= 5 ? 5 : 0} />
           </div>
           {/* Right column — Risk signals */}
           <div className="space-y-1">
-            <SignalRow label="Disputes (6m)" value={String(result.rawSignals.railsr_disputes_last_6_months)} pts={result.rawSignals.railsr_disputes_last_6_months === 0 ? 30 : result.rawSignals.railsr_disputes_last_6_months <= 2 ? 15 : result.rawSignals.railsr_disputes_last_6_months <= 4 ? 5 : 0} />
+            <SignalRow label="Disputes (6m)" value={String(result.rawSignals.railsr_disputes_last_6_months)} pts={disputes6mPts(result.rawSignals.railsr_disputes_last_6_months)} />
             <SignalRow label="Disputes (30d)" value={String(result.rawSignals.railsr_disputes_last_30_days)} pts={result.rawSignals.railsr_disputes_last_30_days > 0 ? -5 : 0} />
             <SignalRow label="Scam Victim" value={String(result.rawSignals.scam_victim_count)} pts={result.rawSignals.scam_victim_count > 0 ? -5 : 0} />
-            <SignalRow label="Max Txn" value={`£${Number(result.disputeProfile.max_transaction_amount ?? 0).toFixed(2)}`} pts={Number(result.disputeProfile.max_transaction_amount) < 5 ? 20 : Number(result.disputeProfile.max_transaction_amount) < 10 ? 14 : Number(result.disputeProfile.max_transaction_amount) < 15 ? 9 : Number(result.disputeProfile.max_transaction_amount) <= 25 ? 5 : 0} />
+            <SignalRow label="Max Txn" value={`£${Number(result.disputeProfile.max_transaction_amount ?? 0).toFixed(2)}`} pts={maxTxnPts(Number(result.disputeProfile.max_transaction_amount ?? 0))} />
             <SignalRow label="Merchants" value={result.disputeProfile.merchants ?? '—'} />
           </div>
         </div>
@@ -301,6 +347,175 @@ function ExpandedDetail({
           </div>
         )}
       </div>
+
+      {/* Enrichment Summary */}
+      {result.enrichmentMetadata && (() => {
+        const failures = (result.enrichmentMetadata.chat_fetch_failures ?? []) as ChatFetchFailure[];
+        return (
+          <div className="border-t pt-3">
+            <button
+              onClick={() => setShowEnrichment(!showEnrichment)}
+              aria-expanded={showEnrichment}
+              className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+            >
+              {showEnrichment ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              <AlertTriangle className="h-3 w-3" />
+              Enrichment Summary
+              {failures.length > 0 && (
+                <Badge variant="amber" className="ml-1">
+                  {failures.length} failed
+                </Badge>
+              )}
+            </button>
+            {showEnrichment && (
+              <div className="mt-2 space-y-3">
+                <div className="grid grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Dialogues</span>
+                    <p className="font-medium">
+                      {result.enrichmentMetadata.dialogues_found ?? 0} found / {result.enrichmentMetadata.dialogues_requested ?? 0} requested
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Files</span>
+                    <p className="font-medium">
+                      {result.enrichmentMetadata.file_descriptions_parsed ?? 0} parsed / {result.enrichmentMetadata.file_artifacts_found ?? 0} found
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Messages to planner</span>
+                    <p className="font-medium">{result.enrichmentMetadata.customer_messages_sent_to_planner ?? 0}</p>
+                  </div>
+                </div>
+                {failures.length > 0 && (
+                  <div>
+                    <h5 className="text-xs font-medium text-red-600 mb-1">Chat Fetch Failures</h5>
+                    <div className="bg-red-50 rounded p-2 text-xs space-y-1 max-h-40 overflow-auto">
+                      {failures.map((f) => (
+                        <div key={f.dialogue_id} className="font-mono">
+                          <span className="text-red-600">{f.status}</span>{' '}
+                          dialogue {f.dialogue_id} (alias={f.alias})
+                          {f.error_body && <span className="text-muted-foreground"> — {f.error_body}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Customer Dialogue */}
+      {result.dialogueMessages && result.dialogueMessages.length > 0 && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowDialogue(!showDialogue)}
+            aria-expanded={showDialogue}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showDialogue ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <MessageSquare className="h-3 w-3" />
+            Customer Dialogue ({result.dialogueMessages.length} messages)
+          </button>
+          {showDialogue && (
+            <div className="mt-2 space-y-2 max-h-96 overflow-auto">
+              {result.dialogueMessages.map((msg, i) => (
+                <div key={i} className="flex gap-2 text-sm">
+                  <Badge variant="gray" className="shrink-0 h-5 text-[10px]">{msg.role}</Badge>
+                  <div className="min-w-0">
+                    <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{msg.created_at}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* File Parse Results */}
+      {result.fileParseResults && result.fileParseResults.length > 0 && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowFileResults(!showFileResults)}
+            aria-expanded={showFileResults}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showFileResults ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <FileText className="h-3 w-3" />
+            File Parse Results ({result.fileParseResults.length} files)
+          </button>
+          {showFileResults && (
+            <div className="mt-2 space-y-2">
+              {result.fileParseResults.map((desc, i) => (
+                <div key={i} className="bg-gray-50 rounded p-3 text-sm whitespace-pre-wrap">{desc}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Planner Request Payload */}
+      {result.plannerRequest && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowPlannerRequest(!showPlannerRequest)}
+            aria-expanded={showPlannerRequest}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showPlannerRequest ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <Code className="h-3 w-3" />
+            Planner Request Payload
+          </button>
+          {showPlannerRequest && (
+            <pre className="mt-2 bg-gray-50 rounded p-3 text-xs font-mono overflow-auto max-h-96">
+              {JSON.stringify(result.plannerRequest, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* System Prompt */}
+      {result.plannerSystemPrompt && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowSystemPrompt(!showSystemPrompt)}
+            aria-expanded={showSystemPrompt}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showSystemPrompt ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <BookOpen className="h-3 w-3" />
+            System Prompt
+          </button>
+          {showSystemPrompt && (
+            <pre className="mt-2 bg-gray-50 rounded p-3 text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap">
+              {result.plannerSystemPrompt}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Raw LLM Response */}
+      {result.plannerRawResponse && (
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setShowRawResponse(!showRawResponse)}
+            aria-expanded={showRawResponse}
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
+          >
+            {showRawResponse ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            <Terminal className="h-3 w-3" />
+            Raw LLM Response
+          </button>
+          {showRawResponse && (
+            <pre className="mt-2 bg-gray-50 rounded p-3 text-xs font-mono overflow-auto max-h-96 whitespace-pre-wrap">
+              {result.plannerRawResponse}
+            </pre>
+          )}
+        </div>
+      )}
 
       {/* Reviewer Controls */}
       {onReview && (
@@ -339,6 +554,7 @@ function ExpandedDetail({
       <div className="border-t pt-3">
         <button
           onClick={() => setShowRawData(!showRawData)}
+          aria-expanded={showRawData}
           className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700"
         >
           {showRawData ? (

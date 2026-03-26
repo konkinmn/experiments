@@ -1,5 +1,36 @@
 export type RiskLevel = 'green' | 'amber' | 'red';
 
+export interface DialogueMessage {
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export interface DialogueFetchMetadata {
+  dialogues_requested: number;
+  dialogues_found: number;
+  dialogues_with_messages: number;
+  chat_fetch_failures: Array<{
+    dialogue_id: number;
+    alias: string;
+    status: number;
+    error_body: string;
+  }>;
+}
+
+export interface CaseAction {
+  id: number;
+  action_type: string;
+  status: string;
+  created_at: string;
+  metadata: {
+    crime_ref_number?: string;
+    crime_date?: string;
+    dispute_form_file_id?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface CaseSignalsRaw {
   case_id: number;
   company_id: number;
@@ -82,8 +113,13 @@ export interface PipelineRunRow {
   executor_action: string;
   pipeline_duration_ms: number;
   prompt_version: string | null;
-  evidence_artifacts: unknown | null;
   planner_raw_response: string | null;
+  case_actions: CaseAction[] | null;
+  planner_request: Record<string, unknown> | null;
+  planner_system_prompt: string | null;
+  file_parse_results: string[] | null;
+  dialogue_messages: DialogueMessage[] | null;
+  enrichment_metadata: Record<string, unknown> | null;
   reviewer_verdict: string | null;
   reviewer_notes: string | null;
   reviewed_at: string | null;
@@ -102,4 +138,10 @@ export interface PipelineRunInsert {
   pipeline_duration_ms: number;
   prompt_version: string | null;
   planner_raw_response: string | null;
+  case_actions: CaseAction[] | null;
+  planner_request: Record<string, unknown> | null;
+  planner_system_prompt: string | null;
+  file_parse_results: string[] | null;
+  dialogue_messages: DialogueMessage[] | null;
+  enrichment_metadata: Record<string, unknown> | null;
 }
