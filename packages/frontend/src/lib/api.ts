@@ -11,6 +11,10 @@ import type {
   DatasetCase,
   DatasetLabel,
   DatasetSourceType,
+  DatasetRun,
+  DatasetRunCase,
+  RunOptions,
+  RubricWeights,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -114,4 +118,20 @@ export const api = {
     fetchApi<{ success: boolean }>(`/api/datasets/cases/${id}`, {
       method: 'DELETE',
     }),
+
+  // Dataset Runs API
+  getRunOptions: () =>
+    fetchApi<RunOptions>('/api/datasets/run-options'),
+
+  getDatasetRuns: (datasetId: number) =>
+    fetchApi<{ data: DatasetRun[] }>(`/api/datasets/${datasetId}/runs`),
+
+  createDatasetRun: (datasetId: number, config: { name: string; model: string; prompt_version: string; rubric_weights: RubricWeights }) =>
+    fetchApi<DatasetRun>(`/api/datasets/${datasetId}/runs`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    }),
+
+  getDatasetRunCases: (runId: number) =>
+    fetchApi<{ data: DatasetRunCase[] }>(`/api/datasets/runs/${runId}/cases`),
 };

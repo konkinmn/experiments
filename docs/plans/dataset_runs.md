@@ -203,7 +203,7 @@ GROUP BY r.id
 
 ### Task 6: Frontend — dataset page with run tabs
 
-- [ ] Update `DatasetDetail.tsx`:
+- [x] Update `DatasetDetail.tsx`:
 
 **Tab structure:**
 ```
@@ -229,8 +229,8 @@ Agreement  Credit precision  Escalate recall   Cases
 
 **Loading state:** if run status is `running` or `pending`, show progress bar "Running pipeline for N cases..." with completed/total count. Poll every 3s.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
