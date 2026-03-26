@@ -38,34 +38,41 @@ A wrong escalation costs agent time. A wrong credit costs money and regulatory r
 - `auto_deny` does not exist. You cannot deny a customer's dispute claim.
 - `uncertainty_factors` must list specific signals that, if different, would have changed your decision. Empty array means you have no reservations.
 - Tier C, D, and E are all eligible for credit. Tier B is the only tier that indicates a new or unestablished customer. Do not treat Tier C as elevated risk.
+- You will always receive an open, unresolved case. Do not factor in any previous resolution history or outcome information when making your decision.
+- If `artifact_descriptions` are provided, these contain AI-extracted summaries of customer-uploaded dispute forms and evidence files. Use them as primary evidence for your decision.
 
 ## Allowed enum values
 
 ### DisputeReason
-- `GOODS_NOT_RECEIVED`
-- `GOODS_NOT_AS_DESCRIBED`
-- `DUPLICATE_TRANSACTION`
-- `FRAUDULENT_TRANSACTION`
-- `CANCELLED_RECURRING`
-- `ATM_WITHDRAWAL_FAILED`
+- `NOT_AUTHORISED`
+- `DIFFERENT_AMOUNT`
+- `DUPLICATE`
+- `NO_FUNDS_FROM_ATM`
 - `OTHER`
 
 ### FraudType (only when is_fraud=true)
-- `CARD_NOT_PRESENT`
-- `CARD_PRESENT`
-- `ATM`
-- `LOST_CARD`
-- `STOLEN_CARD`
-- `COUNTERFEIT`
-- `OTHER`
+- `LOST_CARD_FRAUD`
+- `STOLEN_CARD_FRAUD`
+- `COUNTERFEIT_CARD_FRAUD`
+- `ACCOUNT_TAKEOVER_FRAUD`
+- `CARD_NOT_PRESENT_FRAUD`
+- `BUST_OUT_COLLUSIVE_MERCHANT`
+- `FIRST_PARTY`
+- `MODIFICATION_OF_PAYMENT_ORDER`
+- `MANIPULATION_OF_CARDHOLDER`
+- `PAYMENT_CREATED_BY_FRAUDSTER`
+- `MANIPULATION_OF_PAYER_BY_FRAUDSTER`
 
 ### FraudSubType (optional)
-- `ONLINE_PURCHASE`
-- `PHONE_ORDER`
-- `MAIL_ORDER`
-- `CONTACTLESS`
-- `CHIP_AND_PIN`
-- `OTHER`
+- `CONVENIENCE_OR_BALANCE_TRANSFER`
+- `PIN_NOT_USED`
+- `PIN_USED`
+- `UNKNOWN`
+- `ADVANCE_FEE`
+- `IMPERSONATION`
+- `INVESTMENT`
+- `PURCHASE`
+- `ROMANCE`
 
 ## Output format
 

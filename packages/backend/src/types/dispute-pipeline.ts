@@ -83,6 +83,7 @@ export interface PipelineRunRow {
   pipeline_duration_ms: number;
   prompt_version: string | null;
   evidence_artifacts: unknown | null;
+  planner_raw_response: string | null;
   reviewer_verdict: string | null;
   reviewer_notes: string | null;
   reviewed_at: string | null;
@@ -100,4 +101,5 @@ export interface PipelineRunInsert {
   executor_action: string;
   pipeline_duration_ms: number;
   prompt_version: string | null;
+  planner_raw_response: string | null;
 }

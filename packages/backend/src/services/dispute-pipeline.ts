@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { fetchCaseSignals } from './signals-query.js';
-import { fetchCaseDetails } from './case-api.js';
-import { analyzeWithLLM } from './llm-api.js';
+import { fetchCaseDetails, fetchArtifactAsBase64 } from './case-api.js';
+import { analyzeWithLLM, parseFileWithLLM } from './llm-api.js';
+import type { ContentPart } from './llm-api.js';
 import { getPromptById } from './prompts.js';
 import { insertPipelineRun } from './db.js';
 import type {
@@ -14,6 +15,34 @@ import type {
 } from '../types/dispute-pipeline.js';
 
 const PROMPT_ID = 'dispute-planner-v1';
+
+const FILE_PARSER_SYSTEM_PROMPT = `Your task is to analyze an uploaded document, detect its type, and extract structured data.
+
+1. Detect Document Type
+
+Classify the document into one primary type:
+- Dispute form, invoice, receipt, bank statement, payment proof
+- Screenshot of a transaction or conversation
+- Other (specify)
+
+2. Extraction Rules
+
+For dispute forms:
+- Extract fraud type, dispute reason, crime reference, card status
+- Extract any merchant or transaction details mentioned
+
+For invoices/receipts/statements:
+- Extract counterparties, amounts, currencies, taxes
+- Extract dates (issue, due, payment)
+- Extract identifiers (invoice number, transaction ID, etc.)
+
+For screenshots/images:
+- Describe what is visible in the image
+- Extract any text, amounts, or transaction details shown
+
+Do not infer missing data. Only report what is explicitly present in the document.`;
+
+const FILE_PARSER_USER_PROMPT = 'Extract all relevant information from this file for a dispute case review.';
 
 // --- Layer 0: Signal fetch + dispute profile ---
 
@@ -128,21 +157,17 @@ function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals): D
 // --- Layer 1: Hard gates ---
 
 function checkHardGates(gates: HardGateSignals): string | null {
-  for (const [key, triggered] of Object.entries(gates)) {
-    if (triggered) {
-      return key;
-    }
-  }
+  if (gates.cifas) return 'cifas';
+  if (gates.confirmed_scammer) return 'confirmed_scammer';
+  if (gates.account_not_active) return 'account_not_active';
+  if (gates.railsr_dispute_last_6_months) return 'railsr_dispute_last_6_months';
   return null;
 }
 
 // --- Layer 2: Planner ---
 
 const ALLOWED_ARTIFACT_TYPES = new Set([
-  'DISPUTE_FORM',
-  'FORM',
-  'EVIDENCE',
-  'DOCUMENT',
+  'FILE',
 ]);
 
 function filterCaseArtifacts(artifacts: unknown[]): unknown[] {
@@ -163,9 +188,17 @@ const PlannerOutputSchema = z.object({
     is_dispute: z.literal(false),
     is_fraud: z.boolean(),
     credit_mode: z.literal('IMMEDIATELY'),
-    reason: z.string(),
-    fraud_type: z.string().optional(),
-    fraud_sub_type: z.string().optional(),
+    reason: z.enum(['NOT_AUTHORISED', 'DIFFERENT_AMOUNT', 'DUPLICATE', 'NO_FUNDS_FROM_ATM', 'OTHER']),
+    fraud_type: z.enum([
+      'LOST_CARD_FRAUD', 'STOLEN_CARD_FRAUD', 'COUNTERFEIT_CARD_FRAUD',
+      'ACCOUNT_TAKEOVER_FRAUD', 'CARD_NOT_PRESENT_FRAUD', 'BUST_OUT_COLLUSIVE_MERCHANT',
+      'FIRST_PARTY', 'MODIFICATION_OF_PAYMENT_ORDER', 'MANIPULATION_OF_CARDHOLDER',
+      'PAYMENT_CREATED_BY_FRAUDSTER', 'MANIPULATION_OF_PAYER_BY_FRAUDSTER',
+    ]).optional(),
+    fraud_sub_type: z.enum([
+      'CONVENIENCE_OR_BALANCE_TRANSFER', 'PIN_NOT_USED', 'PIN_USED', 'UNKNOWN',
+      'ADVANCE_FEE', 'IMPERSONATION', 'INVESTMENT', 'PURCHASE', 'ROMANCE',
+    ]).optional(),
     crime_reference: z.string().optional(),
   }).optional(),
   uncertainty_factors: z.array(z.string()),
@@ -212,41 +245,132 @@ function parseJson(raw: string): unknown {
 async function callPlanner(
   profile: DisputeProfile,
   rawSignals: CaseSignalsRaw,
-  caseDetails: { summary: string; artifacts: unknown[] } | null,
+  caseDetails: { artifacts: unknown[] } | null,
 ): Promise<{ output: PlannerOutput; rawResponse: string }> {
   const prompt = await getPromptById(PROMPT_ID);
   if (!prompt) {
     throw new Error(`Prompt ${PROMPT_ID} not found`);
   }
 
-  const userMessage = JSON.stringify({
-    dispute_profile: profile,
-    raw_signals: {
-      case_created_at: rawSignals.case_created_at,
-      tx_count_90_days: rawSignals.tx_count_90_days,
-      active_months: rawSignals.active_months,
-      prior_payments_to_merchant: rawSignals.prior_payments_to_merchant,
-      railsr_disputes_last_30_days: rawSignals.railsr_disputes_last_30_days,
-    },
-    case_details: caseDetails
-      ? {
-          artifacts: filterCaseArtifacts(caseDetails.artifacts),
-        }
-      : null,
-  }, null, 2);
+  const filteredArtifacts = caseDetails ? filterCaseArtifacts(caseDetails.artifacts) : [];
 
-  const response = await analyzeWithLLM([
-    { role: 'system', content: prompt.content },
-    { role: 'user', content: userMessage },
-  ]);
+  // Fetch artifact files in parallel
+  const artifactResults = await Promise.allSettled(
+    filteredArtifacts.map(async (a) => {
+      const artifact = a as { id: number; artifact_id: string; artifact_type: string };
+      const fileId = artifact.artifact_id ?? String(artifact.id);
+      const file = await fetchArtifactAsBase64(fileId);
+      return { artifact, file };
+    }),
+  );
 
-  const parsed = parseJson(response.content);
-  if (!parsed) {
-    throw new Error(`Failed to parse JSON from LLM response: ${response.content}`);
+  // Build multimodal content array
+  const contentParts: ContentPart[] = [];
+
+  for (const result of artifactResults) {
+    if (result.status !== 'fulfilled' || !result.value.file) continue;
+    const { file } = result.value;
+
+    if (file.mimeType === 'application/pdf') {
+      contentParts.push({
+        type: 'file',
+        file: {
+          filename: file.filename,
+          file_data: `data:application/pdf;base64,${file.base64}`,
+        },
+      });
+    } else {
+      contentParts.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${file.mimeType};base64,${file.base64}`,
+        },
+      });
+    }
   }
 
-  const validated = PlannerOutputSchema.parse(parsed);
-  return { output: validated, rawResponse: response.content };
+  // Append text signals as the final content part
+  contentParts.push({
+    type: 'text',
+    text: JSON.stringify({
+      dispute_profile: profile,
+      raw_signals: {
+        case_created_at: rawSignals.case_created_at,
+        tx_count_90_days: rawSignals.tx_count_90_days,
+        active_months: rawSignals.active_months,
+        prior_payments_to_merchant: rawSignals.prior_payments_to_merchant,
+        railsr_disputes_last_30_days: rawSignals.railsr_disputes_last_30_days,
+      },
+      case_details: caseDetails
+        ? {
+            artifacts: filterCaseArtifacts(caseDetails.artifacts),
+          }
+        : null,
+    }, null, 2),
+  });
+
+  // Separate file parts from text
+  const fileParts = contentParts.filter(p => p.type === 'file' || p.type === 'image_url');
+  const textPart = contentParts.find((p): p is { type: 'text'; text: string } => p.type === 'text');
+
+  // Parse each file with Google Gemini (in parallel)
+  console.log(`[Planner] ${fileParts.length} file(s) to parse with Gemini`);
+  const parsedDescriptions: string[] = [];
+  if (fileParts.length > 0) {
+    const parseResults = await Promise.allSettled(
+      fileParts.map(part => parseFileWithLLM(FILE_PARSER_SYSTEM_PROMPT, FILE_PARSER_USER_PROMPT, part)),
+    );
+    for (const result of parseResults) {
+      if (result.status === 'fulfilled') {
+        parsedDescriptions.push(result.value);
+      } else {
+        console.warn('[Planner] File parse failed:', result.reason);
+        parsedDescriptions.push('[File could not be parsed]');
+      }
+    }
+    console.log('[Planner] Parsed file descriptions:', JSON.stringify(parsedDescriptions, null, 2));
+  }
+
+  // Build text-only payload with parsed file descriptions
+  const signalsPayload = JSON.parse(textPart?.text ?? '{}') as Record<string, unknown>;
+  if (parsedDescriptions.length > 0) {
+    signalsPayload.artifact_descriptions = parsedDescriptions;
+  }
+
+  const plannerMessages = [
+    { role: 'system' as const, content: prompt.content },
+    { role: 'user' as const, content: JSON.stringify(signalsPayload, null, 2) },
+  ];
+  console.log('[Planner] Full LLM request:', JSON.stringify({
+    messages: plannerMessages.map(m => ({
+      role: m.role,
+      content: m.role === 'user' ? m.content : `[system prompt, ${m.content.length} chars]`,
+    })),
+    provider: 'ANTHROPIC',
+    model: process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929',
+  }, null, 2));
+
+  const response = await analyzeWithLLM(plannerMessages);
+
+  const rawResponse = response.content;
+
+  const parsed = parseJson(rawResponse);
+  if (!parsed) {
+    throw Object.assign(
+      new Error(`Failed to parse JSON from LLM response`),
+      { rawResponse },
+    );
+  }
+
+  try {
+    const validated = PlannerOutputSchema.parse(parsed);
+    return { output: validated, rawResponse };
+  } catch (zodErr) {
+    throw Object.assign(
+      zodErr instanceof Error ? zodErr : new Error(String(zodErr)),
+      { rawResponse },
+    );
+  }
 }
 
 // --- Pipeline orchestrator ---
@@ -271,6 +395,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
   const triggeredGate = checkHardGates(hardGates);
 
   let plannerOutput: PlannerOutput | null = null;
+  let plannerRawResponse: string | null = null;
 
   if (!triggeredGate) {
     // Layer 2: Planner
@@ -278,13 +403,21 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       const result = await callPlanner(
         profile,
         rawSignals,
-        caseDetails ? { summary: caseDetails.summary, artifacts: caseDetails.artifacts as unknown[] } : null,
+        caseDetails ? { artifacts: caseDetails.artifacts as unknown[] } : null,
       );
       plannerOutput = result.output;
+      plannerRawResponse = result.rawResponse;
     } catch (err) {
       // Parse error fallback — escalate, don't throw
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Planner error for case ${caseId}:`, errorMessage);
+      if (err && typeof err === 'object' && 'rawResponse' in err) {
+        console.error(`Planner raw LLM response for case ${caseId}:`, (err as { rawResponse: string }).rawResponse);
+      }
+      // Capture raw LLM response even on parse/validation failure
+      if (err && typeof err === 'object' && 'rawResponse' in err) {
+        plannerRawResponse = (err as { rawResponse: string }).rawResponse;
+      }
       plannerOutput = {
         thought: `Planner error: ${errorMessage}`,
         decision: 'escalate_to_agent',
@@ -318,6 +451,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     executor_action: 'shadow',
     pipeline_duration_ms: duration,
     prompt_version: PROMPT_ID,
+    planner_raw_response: plannerRawResponse,
   });
 
   return row;

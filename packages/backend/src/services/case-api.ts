@@ -32,6 +32,8 @@ export interface CaseDetails {
 }
 
 const CASE_API_BASE_URL = process.env.CASE_API_BASE_URL || 'https://case-ag.k1.anna.money';
+const FILE_SHARE_BASE_URL = process.env.FILE_SHARE_BASE_URL || 'https://file-share-ag.k1.anna.money';
+const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || 'https://media.k1.anna.money';
 const API_TOKEN = process.env.API_TOKEN || '';
 
 export async function fetchCaseTimeline(caseId: number): Promise<CaseTimeline> {
@@ -128,6 +130,63 @@ export async function fetchFilteredCaseIds(params: FetchCasesParams): Promise<nu
   }
 
   return allCaseIds;
+}
+
+export interface ArtifactFile {
+  base64: string;
+  mimeType: string;
+  filename: string;
+}
+
+export async function fetchArtifactAsBase64(artifactId: string): Promise<ArtifactFile | null> {
+  try {
+    // Step 1: Get file metadata from file-share service
+    const metaUrl = `${FILE_SHARE_BASE_URL}/api/workstation/files/${artifactId}`;
+    const metaResponse = await fetch(metaUrl, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+      },
+    });
+
+    if (!metaResponse.ok) {
+      console.warn(`File-share fetch failed for artifact ${artifactId}: ${metaResponse.status} ${metaResponse.statusText}`);
+      return null;
+    }
+
+    const metaData = await metaResponse.json() as {
+      data?: { path?: string; mime_type?: string; name?: string };
+    };
+
+    const filePath = metaData.data?.path;
+    const mimeType = metaData.data?.mime_type || 'application/octet-stream';
+    const filename = metaData.data?.name || artifactId;
+
+    if (!filePath) {
+      console.warn(`No file path in file-share response for artifact ${artifactId}`);
+      return null;
+    }
+
+    // Step 2: Fetch raw bytes from media service
+    const mediaUrl = `${MEDIA_BASE_URL}${filePath}`;
+    const mediaResponse = await fetch(mediaUrl, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+      },
+    });
+
+    if (!mediaResponse.ok) {
+      console.warn(`Media fetch failed for artifact ${artifactId}: ${mediaResponse.status} ${mediaResponse.statusText}`);
+      return null;
+    }
+
+    const arrayBuffer = await mediaResponse.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+    return { base64, mimeType, filename };
+  } catch (err) {
+    console.warn(`Failed to fetch artifact ${artifactId}:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
 }
 
 export async function fetchCaseTimelines(caseIds: number[]): Promise<Map<number, CaseTimeline>> {

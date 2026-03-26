@@ -87,9 +87,11 @@ Hard gate check
       ↓ (if clear)
 Build dispute profile (rubric score + risk level)
       ↓
-Fetch + base64 encode DISPUTE_FORM and FILE artifacts
+Fetch + base64 encode FILE artifacts
       ↓
-Planner LLM call (profile + artifacts as context)
+Pre-parse each file with Google Gemini → text descriptions
+      ↓
+Planner LLM call (profile + artifact descriptions as text context)
       ↓
 Save full audit record to PostgreSQL
       ↓
@@ -108,14 +110,14 @@ Reviewer marks correct / incorrect + notes
 
 **Allowed artifact types:**
 
-| Type | Format | Passed to Planner as |
+| Type | Format | Processing |
 |---|---|---|
-| `DISPUTE_FORM` | PDF | `{ type: "file", file: { filename, file_data: "data:application/pdf;base64,..." } }` |
-| `FILE` | Image (screenshot) | `{ type: "image_url", image_url: { url: "data:{mimeType};base64,..." } }` |
+| `FILE` (PDF) | PDF | Fetched as base64, pre-parsed with Google Gemini → text description |
+| `FILE` (image) | Image (screenshot) | Fetched as base64, pre-parsed with Google Gemini → text description |
 
 All other types stripped before Planner call.
 
-**File fetch flow:**
+**File fetch and parse flow:**
 ```
 artifact.artifact_id
         ↓
@@ -126,9 +128,15 @@ response.data.path + response.data.mime_type
 GET https://media.k1.anna.money{path}
         ↓
 raw bytes → base64
+        ↓
+Send to Google Gemini (gemini-2.5-flash) via LLM proxy for parsing
+        ↓
+text description → included in Planner payload as artifact_descriptions
 ```
 
-Fetched in parallel with BQ signals. Individual file fetch failures log a warning and skip that artifact — they do not fail the pipeline run.
+Fetched in parallel with BQ signals. Each file is parsed individually with Gemini. Individual file fetch or parse failures log a warning and include a placeholder — they do not fail the pipeline run.
+
+This follows the anna-gemma `parse_file` pattern: Gemini handles multimodal file understanding, the Planner (Anthropic Claude) receives text-only input.
 
 **Env vars required:** `FILE_SHARE_BASE_URL`, `MEDIA_BASE_URL`
 
@@ -241,8 +249,9 @@ Minimum sample before going live: 30 shadow cases within the narrow cohort, all 
 - ✅ Fix tx_count_90_days join (alias-based, no account_account join needed)
 - ✅ Risk level derivation updated to rubric score
 - ✅ Hard gate priority order defined
-- ✅ Artifact types audited and restricted to DISPUTE_FORM + FILE
+- ✅ Artifact types audited and restricted to FILE only (DISPUTE_FORM metadata lives on disputes service, not file-share; the dispute form PDF is a FILE artifact)
 - ✅ File fetch flow designed (file-share → media service → base64)
+- ✅ File pre-parsing with Google Gemini (follows anna-gemma parse_file pattern)
 
 ---
 

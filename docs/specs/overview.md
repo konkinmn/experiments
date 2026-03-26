@@ -88,17 +88,15 @@ Receives the dispute profile + filtered case artifacts. Outputs one of three dec
 
 **Planner input includes:**
 - Dispute profile (rubric score, risk level, all account signals)
-- Dispute form artifact (PDF — fetched from file-share service, passed as base64)
-- Evidence files (screenshots — fetched from media service, passed as base64 images)
+- AI-extracted artifact descriptions (dispute form PDF and evidence screenshots — fetched, pre-parsed with Google Gemini, text summaries passed to Planner)
 - Selected raw signals (tx_count_90d, active_months, prior_payments_to_merchant, railsr_disputes_30d)
 
 **Allowed artifact types passed to Planner:**
-- `DISPUTE_FORM` — the customer's dispute submission PDF
-- `FILE` — customer-uploaded screenshots/evidence
+- `FILE` — customer-uploaded evidence (dispute form PDF, screenshots)
 
 All other artifact types (`DIALOGUE`, `AGENT_TASK`, `TRANSACTION`, `CASE_ACTION`, `CALL`) are stripped before the Planner sees the case.
 
-**File fetch flow:**
+**File fetch and parse flow:**
 ```
 artifact.artifact_id
         ↓
@@ -108,10 +106,14 @@ response.data.path
         ↓
 GET https://media.k1.anna.money{path}
         ↓
-raw bytes → base64 → passed to LLM proxy
+raw bytes → base64
+        ↓
+Pre-parse with Google Gemini (gemini-2.5-flash) via LLM proxy
+        ↓
+text description → included in Planner payload as artifact_descriptions
 ```
 
-PDFs use `{ type: "file", file: { filename, file_data: "data:application/pdf;base64,..." } }`. Images use `{ type: "image_url", image_url: { url: "data:{mimeType};base64,..." } }`.
+The LLM proxy does not support multimodal content for the Anthropic provider. Following the anna-gemma pattern, files are pre-parsed with Google Gemini into structured text descriptions, which are then included in the Planner's text payload. This two-step approach keeps file understanding (Gemini) separate from dispute reasoning (Claude).
 
 **Planner output schema:**
 
@@ -237,8 +239,8 @@ All artifact types found on dispute cases:
 
 | Type | What it is | Planner sees it |
 |---|---|---|
-| `DISPUTE_FORM` | Customer dispute submission PDF | Yes |
-| `FILE` | Customer-uploaded screenshots/evidence | Yes |
+| `DISPUTE_FORM` | Dispute form metadata (lives on disputes service, not file-share) | No |
+| `FILE` | Customer-uploaded evidence (dispute form PDF, screenshots) | Yes |
 | `TRANSACTION` | Linked transaction records | No — already in BQ signals |
 | `DIALOGUE` | Chat transcripts | No — too noisy |
 | `AGENT_TASK` | Linked agent tasks | No — reveals resolution history |
