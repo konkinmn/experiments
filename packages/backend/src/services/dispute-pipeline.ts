@@ -1,12 +1,14 @@
 import { z } from 'zod';
 import { fetchCaseSignals } from './signals-query.js';
-import { fetchCaseDetails, fetchArtifactAsBase64 } from './case-api.js';
+import { fetchCaseDetails, fetchArtifactAsBase64, fetchCaseActions, fetchCaseDialogues } from './case-api.js';
 import { analyzeWithLLM, parseFileWithLLM } from './llm-api.js';
 import type { ContentPart } from './llm-api.js';
 import { getPromptById } from './prompts.js';
 import { insertPipelineRun } from './db.js';
 import type {
   CaseSignalsRaw,
+  CaseAction,
+  DialogueMessage,
   HardGateSignals,
   DisputeProfile,
   PlannerOutput,
@@ -168,6 +170,8 @@ function checkHardGates(gates: HardGateSignals): string | null {
 
 const ALLOWED_ARTIFACT_TYPES = new Set([
   'FILE',
+  'CASE_ACTION',
+  'DIALOGUE',
 ]);
 
 function filterCaseArtifacts(artifacts: unknown[]): unknown[] {
@@ -242,21 +246,23 @@ function parseJson(raw: string): unknown {
   return null;
 }
 
-async function callPlanner(
-  profile: DisputeProfile,
-  rawSignals: CaseSignalsRaw,
-  caseDetails: { artifacts: unknown[] } | null,
-): Promise<{ output: PlannerOutput; rawResponse: string }> {
-  const prompt = await getPromptById(PROMPT_ID);
-  if (!prompt) {
-    throw new Error(`Prompt ${PROMPT_ID} not found`);
-  }
+const NON_CUSTOMER_SENDER_TYPES = new Set([
+  'agent', 'AGENT',
+  'system', 'SYSTEM',
+  'annabot', 'ANNABOT',
+  'bot', 'BOT',
+]);
 
-  const filteredArtifacts = caseDetails ? filterCaseArtifacts(caseDetails.artifacts) : [];
+function filterCustomerMessages(messages: DialogueMessage[]): DialogueMessage[] {
+  return messages.filter((m) => !NON_CUSTOMER_SENDER_TYPES.has(m.role));
+}
 
+async function fetchAndParseFileArtifacts(
+  fileArtifacts: unknown[],
+): Promise<string[]> {
   // Fetch artifact files in parallel
   const artifactResults = await Promise.allSettled(
-    filteredArtifacts.map(async (a) => {
+    fileArtifacts.map(async (a) => {
       const artifact = a as { id: number; artifact_id: string; artifact_type: string };
       const fileId = artifact.artifact_id ?? String(artifact.id);
       const file = await fetchArtifactAsBase64(fileId);
@@ -264,15 +270,14 @@ async function callPlanner(
     }),
   );
 
-  // Build multimodal content array
-  const contentParts: ContentPart[] = [];
-
+  // Build multimodal content parts for Gemini parsing
+  const fileParts: ContentPart[] = [];
   for (const result of artifactResults) {
     if (result.status !== 'fulfilled' || !result.value.file) continue;
     const { file } = result.value;
 
     if (file.mimeType === 'application/pdf') {
-      contentParts.push({
+      fileParts.push({
         type: 'file',
         file: {
           filename: file.filename,
@@ -280,7 +285,7 @@ async function callPlanner(
         },
       });
     } else {
-      contentParts.push({
+      fileParts.push({
         type: 'image_url',
         image_url: {
           url: `data:${file.mimeType};base64,${file.base64}`,
@@ -288,30 +293,6 @@ async function callPlanner(
       });
     }
   }
-
-  // Append text signals as the final content part
-  contentParts.push({
-    type: 'text',
-    text: JSON.stringify({
-      dispute_profile: profile,
-      raw_signals: {
-        case_created_at: rawSignals.case_created_at,
-        tx_count_90_days: rawSignals.tx_count_90_days,
-        active_months: rawSignals.active_months,
-        prior_payments_to_merchant: rawSignals.prior_payments_to_merchant,
-        railsr_disputes_last_30_days: rawSignals.railsr_disputes_last_30_days,
-      },
-      case_details: caseDetails
-        ? {
-            artifacts: filterCaseArtifacts(caseDetails.artifacts),
-          }
-        : null,
-    }, null, 2),
-  });
-
-  // Separate file parts from text
-  const fileParts = contentParts.filter(p => p.type === 'file' || p.type === 'image_url');
-  const textPart = contentParts.find((p): p is { type: 'text'; text: string } => p.type === 'text');
 
   // Parse each file with Google Gemini (in parallel)
   console.log(`[Planner] ${fileParts.length} file(s) to parse with Gemini`);
@@ -331,10 +312,63 @@ async function callPlanner(
     console.log('[Planner] Parsed file descriptions:', JSON.stringify(parsedDescriptions, null, 2));
   }
 
-  // Build text-only payload with parsed file descriptions
-  const signalsPayload = JSON.parse(textPart?.text ?? '{}') as Record<string, unknown>;
-  if (parsedDescriptions.length > 0) {
-    signalsPayload.artifact_descriptions = parsedDescriptions;
+  return parsedDescriptions;
+}
+
+interface EnrichmentData {
+  caseActions: CaseAction[];
+  customerDialogueMessages: DialogueMessage[];
+  parsedFileDescriptions: string[];
+}
+
+async function callPlanner(
+  profile: DisputeProfile,
+  rawSignals: CaseSignalsRaw,
+  caseDetails: { artifacts: unknown[] } | null,
+  enrichment: EnrichmentData,
+): Promise<{ output: PlannerOutput; rawResponse: string }> {
+  const prompt = await getPromptById(PROMPT_ID);
+  if (!prompt) {
+    throw new Error(`Prompt ${PROMPT_ID} not found`);
+  }
+
+  // Build text payload with three enrichment sections
+  const signalsPayload: Record<string, unknown> = {
+    dispute_profile: profile,
+    raw_signals: {
+      case_created_at: rawSignals.case_created_at,
+      tx_count_90_days: rawSignals.tx_count_90_days,
+      active_months: rawSignals.active_months,
+      prior_payments_to_merchant: rawSignals.prior_payments_to_merchant,
+      railsr_disputes_last_30_days: rawSignals.railsr_disputes_last_30_days,
+    },
+    case_details: caseDetails
+      ? { artifacts: filterCaseArtifacts(caseDetails.artifacts) }
+      : null,
+  };
+
+  // Section 1: Case actions
+  if (enrichment.caseActions.length > 0) {
+    signalsPayload.case_actions = enrichment.caseActions.map((a) => ({
+      action_type: a.action_type,
+      status: a.status,
+      created_at: a.created_at,
+      metadata: a.metadata,
+    }));
+  }
+
+  // Section 2: Customer dialogue messages
+  if (enrichment.customerDialogueMessages.length > 0) {
+    signalsPayload.customer_dialogue_messages = enrichment.customerDialogueMessages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      created_at: m.created_at,
+    }));
+  }
+
+  // Section 3: File artifact descriptions
+  if (enrichment.parsedFileDescriptions.length > 0) {
+    signalsPayload.artifact_descriptions = enrichment.parsedFileDescriptions;
   }
 
   const plannerMessages = [
@@ -396,14 +430,47 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
 
   let plannerOutput: PlannerOutput | null = null;
   let plannerRawResponse: string | null = null;
+  let caseActions: CaseAction[] = [];
 
   if (!triggeredGate) {
+    // Collect FILE and DIALOGUE artifact IDs from case artifacts
+    const allArtifacts = caseDetails ? (caseDetails.artifacts as unknown[]) : [];
+    const fileArtifacts = allArtifacts.filter((a) => {
+      if (typeof a === 'object' && a !== null && 'artifact_type' in a) {
+        return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'FILE';
+      }
+      return false;
+    });
+    const dialogueArtifactIds = allArtifacts
+      .filter((a) => {
+        if (typeof a === 'object' && a !== null && 'artifact_type' in a) {
+          return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'DIALOGUE';
+        }
+        return false;
+      })
+      .map((a) => {
+        const art = a as { id?: number; artifact_id?: string };
+        return art.artifact_id ?? String(art.id);
+      });
+
+    // Run all three enrichments in parallel
+    const [caseActionsResult, dialogueMessagesResult, parsedFileDescriptions] = await Promise.all([
+      fetchCaseActions(caseId),
+      fetchCaseDialogues(dialogueArtifactIds),
+      fetchAndParseFileArtifacts(fileArtifacts),
+    ]);
+    caseActions = caseActionsResult;
+    const customerDialogueMessages = filterCustomerMessages(dialogueMessagesResult);
+
+    console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialogueMessagesResult.length} (customer: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);
+
     // Layer 2: Planner
     try {
       const result = await callPlanner(
         profile,
         rawSignals,
         caseDetails ? { artifacts: caseDetails.artifacts as unknown[] } : null,
+        { caseActions, customerDialogueMessages, parsedFileDescriptions },
       );
       plannerOutput = result.output;
       plannerRawResponse = result.rawResponse;
@@ -452,6 +519,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     pipeline_duration_ms: duration,
     prompt_version: PROMPT_ID,
     planner_raw_response: plannerRawResponse,
+    case_actions: caseActions.length > 0 ? caseActions : null,
   });
 
   return row;

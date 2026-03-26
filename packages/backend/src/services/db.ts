@@ -76,6 +76,15 @@ async function applyMigrations(): Promise<void> {
         `ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS planner_raw_response TEXT`,
       );
     }
+    const { rows: caseActionsRows } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dispute_pipeline_runs' AND column_name = 'case_actions'`,
+    );
+    if (caseActionsRows.length === 0) {
+      await pool.query(
+        `ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS case_actions JSONB DEFAULT NULL`,
+      );
+    }
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -175,8 +184,9 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
   const { rows } = await pool.query<PipelineRunRow>(
     `INSERT INTO dispute_pipeline_runs
        (case_id, raw_signals, case_details, dispute_profile, hard_gates, hard_gate_triggered,
-        planner_output, executor_action, pipeline_duration_ms, prompt_version, planner_raw_response)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        planner_output, executor_action, pipeline_duration_ms, prompt_version, planner_raw_response,
+        case_actions)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING *`,
     [
       row.case_id,
@@ -190,6 +200,7 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
       row.pipeline_duration_ms,
       row.prompt_version,
       row.planner_raw_response,
+      row.case_actions ? JSON.stringify(row.case_actions) : null,
     ],
   );
   if (!rows[0]) throw new Error('Insert did not return a row');
