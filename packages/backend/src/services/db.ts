@@ -327,6 +327,8 @@ import type {
   DatasetCaseRow,
   DatasetLabel,
   DatasetSourceType,
+  DatasetRun,
+  RunConfig,
 } from '../types/dispute-pipeline.js';
 
 export type { PipelineRunRow };
@@ -619,6 +621,184 @@ export async function deleteDatasetCase(id: number): Promise<number> {
   const pool = getPool();
   const result = await pool.query('DELETE FROM dataset_cases WHERE id = $1', [id]);
   return result.rowCount ?? 0;
+}
+
+// --- Dataset Runs ---
+
+interface DatasetRunRow {
+  id: number;
+  dataset_id: number;
+  name: string;
+  config: RunConfig;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export async function insertDatasetRun(
+  datasetId: number,
+  name: string,
+  config: RunConfig,
+): Promise<DatasetRun> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetRunRow>(
+    `INSERT INTO dataset_runs (dataset_id, name, config, status)
+     VALUES ($1, $2, $3, 'pending')
+     RETURNING *`,
+    [datasetId, name, JSON.stringify(config)],
+  );
+  if (!rows[0]) throw new Error('Insert did not return a row');
+  return {
+    ...rows[0],
+    status: rows[0].status as DatasetRun['status'],
+    total_cases: 0,
+    completed_cases: 0,
+    agreement_rate: null,
+    credit_precision: null,
+    escalate_recall: null,
+  };
+}
+
+export async function insertDatasetRunCases(
+  runId: number,
+  datasetCaseIds: number[],
+): Promise<void> {
+  if (datasetCaseIds.length === 0) return;
+  await ensureMigrations();
+  const pool = getPool();
+  const BATCH_SIZE = 500;
+  for (let start = 0; start < datasetCaseIds.length; start += BATCH_SIZE) {
+    const batch = datasetCaseIds.slice(start, start + BATCH_SIZE);
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+    let idx = 1;
+    for (const dcId of batch) {
+      placeholders.push(`($${idx++}, $${idx++})`);
+      values.push(runId, dcId);
+    }
+    await pool.query(
+      `INSERT INTO dataset_run_cases (run_id, dataset_case_id)
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT (run_id, dataset_case_id) DO NOTHING`,
+      values,
+    );
+  }
+}
+
+export async function updateDatasetRunCaseResult(
+  runCaseId: number,
+  pipelineRunId: number,
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE dataset_run_cases SET pipeline_run_id = $1 WHERE id = $2`,
+    [pipelineRunId, runCaseId],
+  );
+}
+
+export async function updateDatasetRunStatus(
+  runId: number,
+  status: DatasetRun['status'],
+  completedAt?: Date,
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  if (completedAt) {
+    await pool.query(
+      `UPDATE dataset_runs SET status = $1, completed_at = $2 WHERE id = $3`,
+      [status, completedAt.toISOString(), runId],
+    );
+  } else {
+    await pool.query(
+      `UPDATE dataset_runs SET status = $1 WHERE id = $2`,
+      [status, runId],
+    );
+  }
+}
+
+export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<
+    DatasetRunRow & { total_cases: string; completed_cases: string }
+  >(
+    `SELECT r.*,
+            COUNT(rc.id)::text AS total_cases,
+            COUNT(rc.pipeline_run_id)::text AS completed_cases
+     FROM dataset_runs r
+     LEFT JOIN dataset_run_cases rc ON rc.run_id = r.id
+     WHERE r.dataset_id = $1
+     GROUP BY r.id
+     ORDER BY r.created_at DESC`,
+    [datasetId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    dataset_id: r.dataset_id,
+    name: r.name,
+    config: r.config,
+    status: r.status as DatasetRun['status'],
+    created_at: r.created_at,
+    completed_at: r.completed_at,
+    total_cases: parseInt(r.total_cases, 10),
+    completed_cases: parseInt(r.completed_cases, 10),
+    agreement_rate: null,
+    credit_precision: null,
+    escalate_recall: null,
+  }));
+}
+
+interface DatasetRunCaseDbRow {
+  id: number;
+  run_id: number;
+  dataset_case_id: number;
+  pipeline_run_id: number | null;
+  created_at: string;
+  case_id: number;
+  label: DatasetLabel | null;
+}
+
+export async function getDatasetRunCases(runId: number): Promise<
+  Array<{
+    id: number;
+    run_id: number;
+    dataset_case_id: number;
+    pipeline_run_id: number | null;
+    case_id: number;
+    label: DatasetLabel | null;
+    pipeline_run: PipelineRunRow | null;
+  }>
+> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetRunCaseDbRow>(
+    `SELECT rc.id, rc.run_id, rc.dataset_case_id, rc.pipeline_run_id, rc.created_at,
+            dc.case_id, dc.label
+     FROM dataset_run_cases rc
+     JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
+     WHERE rc.run_id = $1
+     ORDER BY dc.case_id`,
+    [runId],
+  );
+
+  // Fetch pipeline runs for completed cases
+  const pipelineRunIds = rows
+    .map((r) => r.pipeline_run_id)
+    .filter((id): id is number => id !== null);
+  const pipelineRuns = await getPipelineRunsByIds(pipelineRunIds);
+  const runMap = new Map(pipelineRuns.map((r) => [r.id, r]));
+
+  return rows.map((r) => ({
+    id: r.id,
+    run_id: r.run_id,
+    dataset_case_id: r.dataset_case_id,
+    pipeline_run_id: r.pipeline_run_id,
+    case_id: r.case_id,
+    label: r.label,
+    pipeline_run: r.pipeline_run_id ? (runMap.get(r.pipeline_run_id) ?? null) : null,
+  }));
 }
 
 export async function closePool(): Promise<void> {

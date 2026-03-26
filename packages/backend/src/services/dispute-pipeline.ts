@@ -15,6 +15,7 @@ import type {
   PipelineRunRow,
   RiskLevel,
   RubricWeights,
+  RunConfig,
 } from '../types/dispute-pipeline.js';
 
 const PROMPT_ID = 'dispute-planner-v1';
@@ -351,10 +352,12 @@ async function callPlanner(
   rawSignals: CaseSignalsRaw,
   caseDetails: { artifacts: unknown[] } | null,
   enrichment: EnrichmentData,
+  options?: { model?: string; promptVersion?: string },
 ): Promise<{ output: PlannerOutput; rawResponse: string; plannerRequest: Record<string, unknown>; systemPrompt: string }> {
-  const prompt = await getPromptById(PROMPT_ID);
+  const promptId = options?.promptVersion || PROMPT_ID;
+  const prompt = await getPromptById(promptId);
   if (!prompt) {
-    throw new Error(`Prompt ${PROMPT_ID} not found`);
+    throw new Error(`Prompt ${promptId} not found`);
   }
 
   // Build text payload with three enrichment sections
@@ -411,10 +414,10 @@ async function callPlanner(
       { role: 'user', content: JSON.stringify(redactedPayload, null, 2) },
     ],
     provider: 'ANTHROPIC',
-    model: process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929',
+    model: options?.model || process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929',
   }, null, 2));
 
-  const response = await analyzeWithLLM(plannerMessages);
+  const response = await analyzeWithLLM(plannerMessages, { model: options?.model });
 
   const rawResponse = response.content;
 
@@ -439,7 +442,10 @@ async function callPlanner(
 
 // --- Pipeline orchestrator ---
 
-export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow> {
+export async function runDisputePipeline(
+  caseId: number,
+  runConfig?: RunConfig,
+): Promise<PipelineRunRow> {
   const start = Date.now();
 
   // Layer 0: Fetch signals + case details + case actions in parallel
@@ -452,9 +458,9 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     fetchCaseActions(caseId),
   ]);
 
-  // Build dispute profile
+  // Build dispute profile (use rubric weights from run config if provided)
   const hardGates = deriveHardGates(rawSignals);
-  const profile = buildDisputeProfile(rawSignals, hardGates);
+  const profile = buildDisputeProfile(rawSignals, hardGates, runConfig?.rubric_weights);
 
   // Layer 1: Hard gates
   const triggeredGate = checkHardGates(hardGates);
@@ -519,6 +525,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
         rawSignals,
         caseDetails ? { artifacts: caseDetails.artifacts as unknown[] } : null,
         { caseActions, customerDialogueMessages, parsedFileDescriptions },
+        runConfig ? { model: runConfig.model, promptVersion: runConfig.prompt_version } : undefined,
       );
       plannerOutput = result.output;
       plannerRawResponse = result.rawResponse;
@@ -566,7 +573,7 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     planner_output: plannerOutput,
     executor_action: 'shadow',
     pipeline_duration_ms: duration,
-    prompt_version: PROMPT_ID,
+    prompt_version: runConfig?.prompt_version || PROMPT_ID,
     planner_raw_response: plannerRawResponse,
     case_actions: caseActions.length > 0 ? caseActions : null,
     planner_request: plannerRequest,

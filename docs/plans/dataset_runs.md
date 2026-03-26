@@ -128,7 +128,7 @@ gemini-2.5-flash
 
 ### Task 4: Backend — run execution
 
-- [ ] Add DB functions to `db.ts`:
+- [x] Add DB functions to `db.ts`:
   - `insertDatasetRun(datasetId, name, config)` → returns run row
   - `insertDatasetRunCases(runId, datasetCaseIds)` → batch insert
   - `updateDatasetRunCaseResult(runCaseId, pipelineRunId)`
@@ -136,7 +136,7 @@ gemini-2.5-flash
   - `listDatasetRuns(datasetId)` → with agreement metrics computed in SQL
   - `getDatasetRunCases(runId)` → joined with pipeline_runs and dataset_cases labels
 
-- [ ] Add `POST /api/datasets/:id/runs` endpoint:
+- [x] Add `POST /api/datasets/:id/runs` endpoint:
   1. Validate run config (model, prompt_version must be non-empty)
   2. Insert `dataset_runs` row with status `pending`
   3. Fetch all `dataset_cases` for this dataset
@@ -147,11 +147,11 @@ gemini-2.5-flash
   8. On all complete: set status to `completed`, stamp `completed_at`
   9. Return run immediately with status `pending` — frontend polls
 
-- [ ] Update `runDisputePipeline` to accept optional `RunConfig` — uses config model/prompt/weights instead of env defaults when provided
-- [ ] Add `GET /api/datasets/:id/runs` — list all runs for dataset with metrics
-- [ ] Add `GET /api/dataset-runs/:runId/cases` — all run cases with pipeline output + label
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Update `runDisputePipeline` to accept optional `RunConfig` — uses config model/prompt/weights instead of env defaults when provided
+- [x] Add `GET /api/datasets/:id/runs` — list all runs for dataset with metrics
+- [x] Add `GET /api/dataset-runs/:runId/cases` — all run cases with pipeline output + label
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 

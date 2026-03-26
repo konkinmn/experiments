@@ -14,9 +14,15 @@ import {
   deleteDatasetCase,
   datasetCaseExists,
   getPipelineRunsByIds,
+  insertDatasetRun,
+  insertDatasetRunCases,
+  updateDatasetRunCaseResult,
+  updateDatasetRunStatus,
+  listDatasetRuns,
+  getDatasetRunCases,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
-import type { PipelineRunRow, DatasetCaseRow, DatasetRow } from '../types/dispute-pipeline.js';
+import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig } from '../types/dispute-pipeline.js';
 import { DEFAULT_RUBRIC_WEIGHTS } from '../services/dispute-pipeline.js';
 import { listPrompts } from '../services/prompts.js';
 
@@ -279,4 +285,143 @@ export async function datasetRoutes(app: FastifyInstance) {
     }
     return { success: true };
   });
+
+  // --- Dataset Runs ---
+
+  const CreateRunSchema = z.object({
+    name: z.string().min(1),
+    model: z.string().min(1),
+    prompt_version: z.string().min(1),
+    rubric_weights: z.object({
+      account_trust_max: z.number(),
+      dispute_history_max: z.number(),
+      transaction_risk_max: z.number(),
+      green_threshold: z.number(),
+      amber_threshold: z.number(),
+    }),
+  });
+
+  // POST /:id/runs — Create and execute a dataset run
+  app.post<{ Params: { id: string } }>('/:id/runs', async (request, reply) => {
+    const datasetId = parseInt(request.params.id, 10);
+    if (isNaN(datasetId)) {
+      return reply.status(400).send({ error: 'Invalid dataset ID' });
+    }
+
+    const dataset = await getDataset(datasetId);
+    if (!dataset) {
+      return reply.status(404).send({ error: 'Dataset not found' });
+    }
+
+    try {
+      const body = CreateRunSchema.parse(request.body);
+
+      const runConfig: RunConfig = {
+        model: body.model,
+        prompt_version: body.prompt_version,
+        rubric_weights: body.rubric_weights,
+        name: body.name,
+      };
+
+      // 1. Insert run row
+      const run = await insertDatasetRun(datasetId, body.name, runConfig);
+
+      // 2. Fetch all dataset cases
+      const datasetCases = await listDatasetCases(datasetId);
+      if (datasetCases.length === 0) {
+        await updateDatasetRunStatus(run.id, 'completed', new Date());
+        return reply.status(201).send({ ...run, status: 'completed' });
+      }
+
+      // 3. Insert run case rows
+      const datasetCaseIds = datasetCases.map((dc) => dc.id);
+      await insertDatasetRunCases(run.id, datasetCaseIds);
+
+      // 4. Set status to running
+      await updateDatasetRunStatus(run.id, 'running');
+
+      // 5. Execute pipelines in background with concurrency 3
+      const cases = await getDatasetRunCases(run.id);
+      const tasks = cases.map((rc) => async () => {
+        try {
+          const pipelineRun = await runDisputePipeline(
+            rc.case_id,
+            runConfig,
+          );
+          await updateDatasetRunCaseResult(rc.id, pipelineRun.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          app.log.error(
+            { caseId: rc.case_id, runId: run.id, error },
+            'Pipeline run failed for dataset run case',
+          );
+          // Log but continue — partial results are still valuable
+          console.error(`[Run ${run.id}] Pipeline failed for case ${rc.case_id}: ${message}`);
+        }
+      });
+
+      // Fire and forget
+      runWithConcurrency(tasks, 3)
+        .then(async () => {
+          await updateDatasetRunStatus(run.id, 'completed', new Date());
+        })
+        .catch(async (error) => {
+          app.log.error({ runId: run.id, error }, 'Dataset run batch failed');
+          await updateDatasetRunStatus(run.id, 'failed').catch(() => {});
+        });
+
+      // Return immediately with pending status
+      return reply.status(201).send(run);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      throw error;
+    }
+  });
+
+  // GET /:id/runs — List all runs for a dataset
+  app.get<{ Params: { id: string } }>('/:id/runs', async (request, reply) => {
+    const datasetId = parseInt(request.params.id, 10);
+    if (isNaN(datasetId)) {
+      return reply.status(400).send({ error: 'Invalid dataset ID' });
+    }
+
+    const runs = await listDatasetRuns(datasetId);
+    return { data: runs };
+  });
+
+  // GET /runs/:runId/cases — All run cases with pipeline output + label
+  app.get<{ Params: { runId: string } }>('/runs/:runId/cases', async (request, reply) => {
+    const runId = parseInt(request.params.runId, 10);
+    if (isNaN(runId)) {
+      return reply.status(400).send({ error: 'Invalid run ID' });
+    }
+
+    const cases = await getDatasetRunCases(runId);
+    return {
+      data: cases.map((rc) => ({
+        id: rc.id,
+        runId: rc.run_id,
+        datasetCaseId: rc.dataset_case_id,
+        caseId: rc.case_id,
+        label: rc.label,
+        pipelineRunId: rc.pipeline_run_id,
+        pipelineRun: rc.pipeline_run ? formatPipelineRun(rc.pipeline_run) : null,
+        agreement: computeAgreement(rc.label, rc.pipeline_run),
+      })),
+    };
+  });
+}
+
+function computeAgreement(
+  label: string | null,
+  pipelineRun: PipelineRunRow | null,
+): boolean | null {
+  if (!label || label === 'needs_more_info' || !pipelineRun) return null;
+  const decision = pipelineRun.planner_output?.decision;
+  const hardGate = pipelineRun.hard_gate_triggered;
+  if (label === 'credit' && decision === 'credit') return true;
+  if (label === 'escalate' && (decision === 'escalate_to_agent' || hardGate)) return true;
+  return false;
 }
