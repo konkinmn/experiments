@@ -245,15 +245,11 @@ function parseJson(raw: string): unknown {
 }
 
 const NON_CUSTOMER_SENDER_TYPES = new Set([
-  'agent', 'AGENT',
-  'system', 'SYSTEM',
-  'annabot', 'ANNABOT',
-  'bot', 'BOT',
-  'unknown', 'UNKNOWN',
+  'agent', 'system', 'annabot', 'bot', 'unknown',
 ]);
 
 function filterCustomerMessages(messages: DialogueMessage[]): DialogueMessage[] {
-  return messages.filter((m) => !NON_CUSTOMER_SENDER_TYPES.has(m.role));
+  return messages.filter((m) => !NON_CUSTOMER_SENDER_TYPES.has(m.role.toLowerCase()));
 }
 
 async function fetchAndParseFileArtifacts(
@@ -463,7 +459,8 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       fetchAndParseFileArtifacts(fileArtifacts),
     ]);
     const allCustomerMessages = filterCustomerMessages(dialogueMessagesResult);
-    // Limit dialogue messages to avoid exceeding LLM token limits
+    // Sort by time so the most recent messages are at the end, then take last N
+    allCustomerMessages.sort((a, b) => a.created_at.localeCompare(b.created_at));
     const MAX_DIALOGUE_MESSAGES = 50;
     const customerDialogueMessages = allCustomerMessages.slice(-MAX_DIALOGUE_MESSAGES);
 
@@ -483,12 +480,11 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
       // Parse error fallback — escalate, don't throw
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Planner error for case ${caseId}:`, errorMessage);
+      // Capture raw LLM response even on parse/validation failure (log length only to avoid PII)
       if (err && typeof err === 'object' && 'rawResponse' in err) {
-        console.error(`Planner raw LLM response for case ${caseId}:`, (err as { rawResponse: string }).rawResponse);
-      }
-      // Capture raw LLM response even on parse/validation failure
-      if (err && typeof err === 'object' && 'rawResponse' in err) {
-        plannerRawResponse = (err as { rawResponse: string }).rawResponse;
+        const raw = (err as { rawResponse: string }).rawResponse;
+        console.error(`Planner raw LLM response for case ${caseId}: [${raw.length} chars, not logged due to potential PII]`);
+        plannerRawResponse = raw;
       }
       plannerOutput = {
         thought: `Planner error: ${errorMessage}`,
