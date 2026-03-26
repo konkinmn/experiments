@@ -205,22 +205,22 @@ Export button: XLSX with case_id, segment, pipeline decision, label, notes, rubr
 
 ### Task 6: Frontend hooks and API client
 
-- [ ] Add to `packages/frontend/src/lib/api.ts`:
+- [x] Add to `packages/frontend/src/lib/api.ts`:
   - `getSegments()`
   - `loadSegmentCases(segment)`
   - `getDatasetCases(segment?)`
   - `labelDatasetCase(id, label, notes, labeledBy)`
   - `deleteDatasetCase(id)`
 
-- [ ] Create `packages/frontend/src/hooks/useDatasetBuilder.ts`:
+- [x] Create `packages/frontend/src/hooks/useDatasetBuilder.ts`:
   - `useSegments()` — query
   - `useDatasetCases(segment?)` — query
   - `useLoadSegment()` — mutation, invalidates cases + segments
   - `useLabelCase()` — mutation, invalidates cases + segments
   - `useDeleteDatasetCase()` — mutation
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
