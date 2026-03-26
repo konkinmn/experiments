@@ -85,7 +85,7 @@ No lower bound — flags from any point in history are still relevant. Only task
 
 ### Task 5: Fix tier — use historical log with COALESCE fallback
 
-- [ ] In `signals-query.ts`, replace the current `tier_data` CTE with the validated historical logic:
+- [x] In `signals-query.ts`, replace the current `tier_data` CTE with the validated historical logic:
 
 ```sql
 tier_data AS (
@@ -112,8 +112,8 @@ tier_data AS (
 )
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 6: Fix trust score — use historical changes table
 

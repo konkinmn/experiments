@@ -40,10 +40,26 @@ cifas_data AS (
   WHERE cm.alias = (SELECT alias FROM case_data)
 ),
 tier_data AS (
-  SELECT tl.tier_name
-  FROM \`anna-money.verified_views.compliance_tier_limits\` tl
-  WHERE tl.company_id = (SELECT company_id FROM case_data)
-  LIMIT 1
+  SELECT COALESCE(
+    -- tier at filing: prev_tier of first change AFTER case_created_at
+    (SELECT prev_tier_name
+     FROM \`anna-money.verified_views.compliance_customer_tier_log\`
+     WHERE company_id = (SELECT company_id FROM case_data)
+       AND event_timestamp > (SELECT case_created_at FROM case_data)
+     ORDER BY event_timestamp ASC
+     LIMIT 1),
+    -- no change after filing: most recent tier is correct
+    (SELECT tier_name
+     FROM \`anna-money.verified_views.compliance_customer_tier_log\`
+     WHERE company_id = (SELECT company_id FROM case_data)
+     ORDER BY event_timestamp DESC
+     LIMIT 1),
+    -- no log at all: fall back to current tier from limits table
+    (SELECT tier_name
+     FROM \`anna-money.verified_views.compliance_tier_limits\`
+     WHERE company_id = (SELECT company_id FROM case_data)
+     LIMIT 1)
+  ) AS tier_name
 ),
 money_maker AS (
   SELECT COUNT(*) AS is_money_maker
