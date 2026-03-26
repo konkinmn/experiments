@@ -64,12 +64,14 @@ scam_scammer AS (
   FROM \`anna-money.export.task_manager_agent_tasks\` t
   WHERE t.alias = (SELECT alias FROM case_data)
     AND t.group_id = 'd33eb1ad-5190-44d0-9ff5-af7119b3cd19'
+    AND t.created_at < (SELECT case_created_at FROM case_data)
 ),
 scam_victim AS (
   SELECT COUNT(*) AS victim_count
   FROM \`anna-money.export.task_manager_agent_tasks\` t
   WHERE t.alias = (SELECT alias FROM case_data)
     AND t.group_id = '58447710-7eb4-4ae0-ac01-1761786a3d41'
+    AND t.created_at < (SELECT case_created_at FROM case_data)
 ),
 transaction_activity AS (
   SELECT

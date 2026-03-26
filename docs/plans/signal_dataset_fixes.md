@@ -72,7 +72,7 @@ AND created_at < cd.case_created_at
 
 ### Task 4: Fix scammer and scam victim upper bound
 
-- [ ] In `signals-query.ts`, add upper bound to `scam_check` CTE for both scammer and scam victim counts:
+- [x] In `signals-query.ts`, add upper bound to `scam_check` CTE for both scammer and scam victim counts:
 
 ```sql
 AND created_at < cd.case_created_at
@@ -80,8 +80,8 @@ AND created_at < cd.case_created_at
 
 No lower bound — flags from any point in history are still relevant. Only tasks created after the case was filed should be excluded.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 5: Fix tier — use historical log with COALESCE fallback
 
