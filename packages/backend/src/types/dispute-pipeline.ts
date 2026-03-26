@@ -151,6 +151,12 @@ export interface PipelineRunInsert {
 export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
 export type DatasetSourceType = 'preset' | 'case_ids' | 'custom_sql';
 
+export interface PresetInfo {
+  key: string;
+  label: string;
+  description: string;
+}
+
 export interface DatasetRow {
   id: number;
   name: string;
@@ -164,6 +170,8 @@ export interface DatasetWithCounts extends DatasetRow {
   total_cases: number;
   labeled_cases: number;
 }
+
+export type Dataset = DatasetWithCounts;
 
 export interface DatasetCaseRow {
   id: number;
@@ -180,3 +188,5 @@ export interface DatasetCaseRow {
 export interface DatasetCaseWithRun extends DatasetCaseRow {
   pipeline_run: PipelineRunRow | null;
 }
+
+export type DatasetCase = DatasetCaseWithRun;

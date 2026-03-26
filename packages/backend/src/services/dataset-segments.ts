@@ -1,10 +1,7 @@
 import { getBigQueryService } from './bigquery.js';
+import type { PresetInfo } from '../types/dispute-pipeline.js';
 
-export interface PresetInfo {
-  key: string;
-  label: string;
-  description: string;
-}
+export type { PresetInfo };
 
 interface PresetDefinition extends PresetInfo {
   query: string;

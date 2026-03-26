@@ -175,7 +175,7 @@ Endpoints:
 
 ### Task 4: Backend types
 
-- [ ] Add to `packages/backend/src/types/dispute-pipeline.ts`:
+- [x] Add to `packages/backend/src/types/dispute-pipeline.ts`:
 
 ```typescript
 type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info'
@@ -212,8 +212,8 @@ interface PresetInfo {
 }
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
