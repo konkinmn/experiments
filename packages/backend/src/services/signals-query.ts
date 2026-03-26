@@ -69,10 +69,11 @@ money_maker AS (
     AND b.badge_id = 2
 ),
 trust_score_data AS (
-  SELECT score AS trust_score
-  FROM \`anna-money.export.checklist_trust_score\`
+  SELECT score_color AS trust_score
+  FROM \`anna-money.expiring_tables.compliance_trust_score_changes\`
   WHERE company_id = (SELECT company_id FROM case_data)
-  ORDER BY created DESC
+    AND day <= DATE((SELECT case_created_at FROM case_data))
+  ORDER BY day DESC
   LIMIT 1
 ),
 scam_scammer AS (

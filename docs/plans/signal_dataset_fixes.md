@@ -117,7 +117,7 @@ tier_data AS (
 
 ### Task 6: Fix trust score — use historical changes table
 
-- [ ] In `signals-query.ts`, replace the current `trust_score_data` CTE:
+- [x] In `signals-query.ts`, replace the current `trust_score_data` CTE:
 
 ```sql
 -- before: fetches latest trust score regardless of when case was filed
@@ -141,8 +141,8 @@ trust_score_data AS (
 
 No fallback needed — the table has records from account creation. A case filed before the first trust score row is a race condition too rare to handle.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ### Task 7: Integration test — verify signal accuracy for case 29452
 
