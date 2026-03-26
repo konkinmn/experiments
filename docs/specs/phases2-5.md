@@ -64,7 +64,7 @@ Second run Planner has access to: original dispute profile + form data + evidenc
 
 **File handling in Phase 3:**
 
-Evidence files submitted by the customer arrive as `FILE` artifacts (screenshots/images). The existing file fetch pipeline already handles these — `fetchArtifactAsBase64` fetches from file-share → media service → base64 encodes → passes to LLM proxy as `image_url` content blocks. No new infrastructure needed for this path.
+Evidence files submitted by the customer arrive as `FILE` artifacts (screenshots/images). The existing file fetch pipeline already handles these — `fetchArtifactAsBase64` fetches from file-share → media service → base64 encodes → pre-parsed with Gemini into text descriptions (the LLM proxy doesn't support multimodal for Anthropic). No new infrastructure needed for this path.
 
 ### Regulatory rationale field
 
