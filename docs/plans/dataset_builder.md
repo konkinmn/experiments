@@ -43,7 +43,7 @@ CREATE INDEX idx_dataset_cases_label ON dataset_cases(label);
 
 ### Task 2: Backend — segment query definitions
 
-- [ ] Create `packages/backend/src/services/dataset-segments.ts` with one BQ query per segment. Each query returns `case_id` values only — no signals, just IDs. Signals are fetched when the pipeline runs.
+- [x] Create `packages/backend/src/services/dataset-segments.ts` with one BQ query per segment. Each query returns `case_id` values only — no signals, just IDs. Signals are fetched when the pipeline runs.
 
 Segments and their logic:
 
@@ -112,10 +112,10 @@ LIMIT 20
 
 **`borderline`** and **`complex`** — these cannot be pre-filtered by BQ alone. Return recent resolved dispute cases and let the pipeline compute the rubric score. Borderline cases will emerge from the scored results (40–70 range). Complex cases are manually identified during labeling.
 
-- [ ] Export `SEGMENTS` constant — array of segment names with label and description
-- [ ] Export `fetchSegmentCaseIds(segment: string): Promise<number[]>` — runs the appropriate query, returns up to 30 case IDs
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Export `SEGMENTS` constant — array of segment names with label and description
+- [x] Export `fetchSegmentCaseIds(segment: string): Promise<number[]>` — runs the appropriate query, returns up to 30 case IDs
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
