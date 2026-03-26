@@ -259,8 +259,8 @@ When Custom SQL selected: monospace textarea for BQ SQL, with note "Query must r
 
 ### Task 6: Frontend — Dataset detail page
 
-- [ ] Create `packages/frontend/src/pages/DatasetDetail.tsx`
-- [ ] Register route `/dataset/:id` in `App.tsx`
+- [x] Create `packages/frontend/src/pages/DatasetDetail.tsx`
+- [x] Register route `/dataset/:id` in `App.tsx`
 
 **Layout:** Identical to Dispute Agent Eval page (`/rubric-tester`) with these differences:
 
@@ -285,8 +285,8 @@ When Custom SQL selected: monospace textarea for BQ SQL, with note "Query must r
 - Raw BQ Data: collapsible section at bottom
 - If `pipeline_run_id` is null: show skeleton placeholder with "Running pipeline..." instead of card body
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 

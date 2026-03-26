@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Check, X, AlertTriangle, MessageSquare, FileText, Code, BookOpen, Terminal } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Check, X, AlertTriangle, MessageSquare, FileText, Code, BookOpen, Terminal, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { PipelineResult, RiskLevel, CaseSignalsRaw } from '@/types';
+import type { PipelineResult, RiskLevel, CaseSignalsRaw, DatasetCase, DatasetLabel } from '@/types';
 
 interface ResultsTableProps {
   results: PipelineResult[];
   onDelete?: (id: number) => void;
   onReview?: (id: number, verdict: 'correct' | 'incorrect', notes?: string) => void;
+  verdictOptions?: 'eval' | 'dataset';
+  datasetCases?: DatasetCase[];
+  onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string) => void;
+  onDeleteCase?: (datasetCaseId: number) => void;
 }
 
 const RISK_BADGE: Record<RiskLevel, { label: string; variant: 'green' | 'amber' | 'red' }> = {
@@ -20,6 +24,12 @@ const RISK_BADGE: Record<RiskLevel, { label: string; variant: 'green' | 'amber' 
 const DECISION_BADGE: Record<string, { label: string; variant: 'green' | 'amber' | 'red' }> = {
   credit: { label: 'Credit', variant: 'green' },
   escalate_to_agent: { label: 'Escalate', variant: 'amber' },
+};
+
+const LABEL_BADGE: Record<DatasetLabel, { label: string; variant: 'green' | 'amber' | 'blue' }> = {
+  credit: { label: 'Credit', variant: 'green' },
+  escalate: { label: 'Escalate', variant: 'amber' },
+  needs_more_info: { label: 'Needs More Info', variant: 'blue' },
 };
 
 const HARD_GATE_LABELS: Record<string, string> = {
@@ -119,7 +129,122 @@ function formatSignalValue(value: unknown): string {
   return String(value);
 }
 
-export function ResultsTable({ results, onDelete, onReview }: ResultsTableProps) {
+export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase }: ResultsTableProps) {
+  if (verdictOptions === 'dataset') {
+    const cases = datasetCases ?? [];
+    if (cases.length === 0) {
+      return (
+        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-muted-foreground">
+          No cases in this dataset.
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {cases.map((dc) => {
+          if (!dc.pipelineRun) {
+            return (
+              <div key={dc.id} className="rounded-lg border border-gray-200 bg-white">
+                <div className="flex items-center gap-8 px-5 py-4">
+                  <div className="min-w-0">
+                    <span className="text-xs text-muted-foreground">Case</span>
+                    <p className="font-mono text-lg font-bold">{dc.caseId}</p>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Running pipeline...
+                  </div>
+                  {onDeleteCase && (
+                    <div className="ml-auto">
+                      <button
+                        className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors"
+                        onClick={() => onDeleteCase(dc.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="border-t px-5 py-4">
+                  <div className="space-y-3 animate-pulse">
+                    <div className="h-4 bg-gray-200 rounded w-3/4" />
+                    <div className="h-4 bg-gray-200 rounded w-1/2" />
+                    <div className="h-20 bg-gray-200 rounded" />
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          const r = dc.pipelineRun;
+          const risk = RISK_BADGE[r.disputeProfile.risk_level];
+          const decision = r.hardGateTriggered
+            ? { label: HARD_GATE_LABELS[r.hardGateTriggered] ?? r.hardGateTriggered, variant: 'red' as const }
+            : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
+          const labelBadge = dc.label ? LABEL_BADGE[dc.label] : null;
+
+          return (
+            <div key={dc.id} className="rounded-lg border border-gray-200 bg-white">
+              <div className="flex items-center gap-8 px-5 py-4">
+                <div className="min-w-0">
+                  <span className="text-xs text-muted-foreground">Case</span>
+                  <p className="font-mono text-lg font-bold">{dc.caseId}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">Risk</span>
+                  <div className="mt-1">
+                    <Badge variant={risk.variant}>{risk.label}</Badge>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">Decision</span>
+                  <div className="mt-1">
+                    <Badge variant={decision.variant}>{decision.label}</Badge>
+                  </div>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">Duration</span>
+                  <p className="text-sm mt-1">{(r.pipelineDurationMs / 1000).toFixed(1)}s</p>
+                </div>
+                <div>
+                  <span className="text-xs text-muted-foreground">Label</span>
+                  <div className="mt-1">
+                    {labelBadge ? (
+                      <Badge variant={labelBadge.variant}>{labelBadge.label}</Badge>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">Pending</span>
+                    )}
+                  </div>
+                </div>
+                {onDeleteCase && (
+                  <div className="ml-auto">
+                    <button
+                      className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors"
+                      onClick={() => onDeleteCase(dc.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="border-t px-5 py-4">
+                <ExpandedDetail
+                  result={r}
+                  verdictOptions="dataset"
+                  datasetCaseId={dc.id}
+                  datasetLabel={dc.label}
+                  datasetLabelNotes={dc.labelNotes}
+                  onDatasetLabel={onDatasetLabel}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   if (results.length === 0) {
     return (
       <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-muted-foreground">
@@ -193,12 +318,26 @@ export function ResultsTable({ results, onDelete, onReview }: ResultsTableProps)
 function ExpandedDetail({
   result,
   onReview,
+  verdictOptions = 'eval',
+  datasetCaseId,
+  datasetLabel,
+  datasetLabelNotes,
+  onDatasetLabel,
 }: {
   result: PipelineResult;
   onReview?: (id: number, verdict: 'correct' | 'incorrect', notes?: string) => void;
+  verdictOptions?: 'eval' | 'dataset';
+  datasetCaseId?: number;
+  datasetLabel?: DatasetLabel | null;
+  datasetLabelNotes?: string | null;
+  onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string) => void;
 }) {
-  const [reviewNotes, setReviewNotes] = useState(result.reviewerNotes ?? '');
-  useEffect(() => { setReviewNotes(result.reviewerNotes ?? ''); }, [result.reviewerNotes]);
+  const [reviewNotes, setReviewNotes] = useState(
+    verdictOptions === 'dataset' ? (datasetLabelNotes ?? '') : (result.reviewerNotes ?? ''),
+  );
+  useEffect(() => {
+    setReviewNotes(verdictOptions === 'dataset' ? (datasetLabelNotes ?? '') : (result.reviewerNotes ?? ''));
+  }, [verdictOptions, datasetLabelNotes, result.reviewerNotes]);
   const [showRawData, setShowRawData] = useState(false);
   const [showEnrichment, setShowEnrichment] = useState(false);
   const [showDialogue, setShowDialogue] = useState(false);
@@ -517,8 +656,8 @@ function ExpandedDetail({
         </div>
       )}
 
-      {/* Reviewer Controls */}
-      {onReview && (
+      {/* Reviewer Controls — eval mode */}
+      {verdictOptions === 'eval' && onReview && (
         <div className="border-t pt-3">
           <h4 className="text-xs font-medium text-muted-foreground mb-2">Reviewer Verdict</h4>
           <div className="flex items-center gap-3">
@@ -539,6 +678,48 @@ function ExpandedDetail({
             >
               <X className="h-4 w-4 mr-1" />
               Incorrect
+            </Button>
+            <Input
+              className="flex-1 max-w-sm"
+              placeholder="Notes (optional)"
+              value={reviewNotes}
+              onChange={(e) => setReviewNotes(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Reviewer Controls — dataset mode */}
+      {verdictOptions === 'dataset' && onDatasetLabel && datasetCaseId != null && (
+        <div className="border-t pt-3">
+          <h4 className="text-xs font-medium text-muted-foreground mb-2">Reviewer Verdict</h4>
+          <div className="flex items-center gap-3">
+            <Button
+              size="sm"
+              variant={datasetLabel === 'credit' ? 'default' : 'outline'}
+              className={datasetLabel === 'credit' ? 'bg-green-600 hover:bg-green-700' : ''}
+              onClick={() => onDatasetLabel(datasetCaseId, 'credit', reviewNotes || undefined)}
+            >
+              <Check className="h-4 w-4 mr-1" />
+              Credit
+            </Button>
+            <Button
+              size="sm"
+              variant={datasetLabel === 'escalate' ? 'default' : 'outline'}
+              className={datasetLabel === 'escalate' ? 'bg-amber-600 hover:bg-amber-700' : ''}
+              onClick={() => onDatasetLabel(datasetCaseId, 'escalate', reviewNotes || undefined)}
+            >
+              <AlertTriangle className="h-4 w-4 mr-1" />
+              Escalate
+            </Button>
+            <Button
+              size="sm"
+              variant={datasetLabel === 'needs_more_info' ? 'default' : 'outline'}
+              className={datasetLabel === 'needs_more_info' ? 'bg-blue-600 hover:bg-blue-700' : ''}
+              onClick={() => onDatasetLabel(datasetCaseId, 'needs_more_info', reviewNotes || undefined)}
+            >
+              <MessageSquare className="h-4 w-4 mr-1" />
+              Needs more info
             </Button>
             <Input
               className="flex-1 max-w-sm"

@@ -3,6 +3,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { TimelineAnalyzer } from '@/pages/TimelineAnalyzer';
 import { RubricTester } from '@/pages/RubricTester';
 import { DatasetBuilder } from '@/pages/DatasetBuilder';
+import { DatasetDetail } from '@/pages/DatasetDetail';
 
 function App() {
   return (
@@ -13,7 +14,7 @@ function App() {
         <Route path="/timeline-analyzer" element={<TimelineAnalyzer />} />
         <Route path="/rubric-tester" element={<RubricTester />} />
         <Route path="/dataset" element={<DatasetBuilder />} />
-        <Route path="/dataset/:id" element={<div>Dataset detail (coming soon)</div>} />
+        <Route path="/dataset/:id" element={<DatasetDetail />} />
       </Routes>
     </div>
   );
