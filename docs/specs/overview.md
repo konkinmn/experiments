@@ -90,11 +90,15 @@ Receives the dispute profile + filtered case artifacts. Outputs one of three dec
 - Dispute profile (rubric score, risk level, all account signals)
 - AI-extracted artifact descriptions (dispute form PDF and evidence screenshots — fetched, pre-parsed with Google Gemini, text summaries passed to Planner)
 - Selected raw signals (tx_count_90d, active_months, prior_payments_to_merchant, railsr_disputes_30d)
+- Case action metadata (structured records from case workflow — e.g. crime_ref_number from DISPUTE_FORM_FILLED)
+- Customer dialogue messages (customer-only chat messages, filtered and capped at last 50)
 
-**Allowed artifact types passed to Planner:**
-- `FILE` — customer-uploaded evidence (dispute form PDF, screenshots)
+**Data sources passed to Planner:**
+- `FILE` artifacts — customer-uploaded evidence (dispute form PDF, screenshots), pre-parsed with Google Gemini into text descriptions
+- `CASE_ACTION` data — fetched directly via Tasks API (`GET /api/workstation/case-actions?case_id={id}`), not from case artifacts. Structured metadata like `crime_ref_number` from `DISPUTE_FORM_FILLED` actions
+- `DIALOGUE` messages — dialogue artifact IDs are extracted from case artifacts, then customer messages are fetched via Tasks + Chat APIs. Agent/system/bot messages are filtered out. Capped at last 50 messages sorted by time
 
-All other artifact types (`DIALOGUE`, `AGENT_TASK`, `TRANSACTION`, `CASE_ACTION`, `CALL`) are stripped before the Planner sees the case.
+All other artifact types (`AGENT_TASK`, `TRANSACTION`, `CALL`) are not passed to the Planner.
 
 **File fetch and parse flow:**
 ```
@@ -113,7 +117,31 @@ Pre-parse with Google Gemini (gemini-2.5-flash) via LLM proxy
 text description → included in Planner payload as artifact_descriptions
 ```
 
-The LLM proxy does not support multimodal content for the Anthropic provider. Following the anna-gemma pattern, files are pre-parsed with Google Gemini into structured text descriptions, which are then included in the Planner's text payload. This two-step approach keeps file understanding (Gemini) separate from dispute reasoning (Claude).
+The LLM proxy does not support multimodal content for the Anthropic provider. Following the anna-gemma pattern, files are pre-parsed with Google Gemini into structured text descriptions, which are then included in the Planner's text payload. This two-step approach keeps file understanding (Gemini) separate from dispute reasoning (Claude). CASE_ACTION and DIALOGUE data are already structured text — they bypass Gemini entirely and go straight into the Planner payload.
+
+**Case action fetch flow:**
+```
+GET {TASKS_BASE_URL}/api/workstation/case-actions?case_id={caseId}
+        ↓
+response.data → CaseAction[]
+        ↓
+Passed to Planner as case_actions (action_type, status, created_at, metadata)
+```
+
+**Dialogue message fetch flow (3-step):**
+```
+DIALOGUE artifact IDs from case artifacts
+        ↓
+Step 1: GET {TASKS_BASE_URL}/api/v3/dialogues?id={ids} → get dialogue records + alias
+        ↓
+Step 2: GET {TASKS_BASE_URL}/api/v3/messages?dialogue_id={id} → get message IDs per dialogue
+        ↓
+Step 3: GET {CHAT_BASE_URL}/api/2/user/{alias}/messages?id[]={id1}&id[]={id2}... → get message content
+        ↓
+Filter: hidden messages removed, non-customer sender types (agent, system, annabot, bot, unknown) removed
+        ↓
+Sort by created_at, cap at last 50 → customer_dialogue_messages in Planner payload
+```
 
 **Planner output schema:**
 
@@ -242,9 +270,9 @@ All artifact types found on dispute cases:
 | `DISPUTE_FORM` | Dispute form metadata (lives on disputes service, not file-share) | No |
 | `FILE` | Customer-uploaded evidence (dispute form PDF, screenshots) | Yes |
 | `TRANSACTION` | Linked transaction records | No — already in BQ signals |
-| `DIALOGUE` | Chat transcripts | No — too noisy |
+| `DIALOGUE` | Chat transcripts | Yes — customer messages only (agent/system filtered out, last 50) |
 | `AGENT_TASK` | Linked agent tasks | No — reveals resolution history |
-| `CASE_ACTION` | Internal case actions | No — reveals agent actions |
+| `CASE_ACTION` | Case workflow actions | Yes — structured metadata (crime_ref_number, etc.) |
 | `CALL` | Call recordings/logs | No — not parseable |
 
 ---
