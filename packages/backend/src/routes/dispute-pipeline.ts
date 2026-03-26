@@ -100,10 +100,19 @@ export async function disputePipelineRoutes(app: FastifyInstance) {
     if (isNaN(id)) {
       return reply.status(400).send({ error: 'Invalid ID' });
     }
-    const count = await deletePipelineRun(id);
-    if (count === 0) {
-      return reply.status(404).send({ error: 'Pipeline run not found' });
+    try {
+      const count = await deletePipelineRun(id);
+      if (count === 0) {
+        return reply.status(404).send({ error: 'Pipeline run not found' });
+      }
+      return { success: true };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('violates foreign key constraint')) {
+        return reply.status(409).send({
+          error: 'Cannot delete: this pipeline run is referenced by a dataset case',
+        });
+      }
+      throw error;
     }
-    return { success: true };
   });
 }

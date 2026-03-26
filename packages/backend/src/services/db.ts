@@ -105,6 +105,33 @@ async function applyMigrations(): Promise<void> {
         );
       }
     }
+    // Migration 006: dataset_cases table
+    const { rows: datasetTableRows } = await pool.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_name = 'dataset_cases'`,
+    );
+    if (datasetTableRows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS dataset_cases (
+          id SERIAL PRIMARY KEY,
+          case_id INTEGER NOT NULL,
+          segment TEXT NOT NULL,
+          pipeline_run_id INTEGER REFERENCES dispute_pipeline_runs(id),
+          label TEXT CHECK (label IN ('credit', 'escalate', 'needs_more_info')),
+          label_notes TEXT,
+          labeled_by TEXT,
+          labeled_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          UNIQUE(case_id)
+        )
+      `);
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_dataset_cases_segment ON dataset_cases(segment)`,
+      );
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_dataset_cases_label ON dataset_cases(label)`,
+      );
+    }
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -194,7 +221,7 @@ export async function deleteJob(id: string): Promise<number> {
 
 // --- Dispute Pipeline Runs ---
 
-import type { PipelineRunRow, PipelineRunInsert } from '../types/dispute-pipeline.js';
+import type { PipelineRunRow, PipelineRunInsert, DatasetCaseRow, DatasetLabel } from '../types/dispute-pipeline.js';
 
 export type { PipelineRunRow };
 
@@ -257,10 +284,122 @@ export async function updatePipelineReview(
   return rows[0] ?? null;
 }
 
+export async function getPipelineRunsByIds(ids: number[]): Promise<PipelineRunRow[]> {
+  if (ids.length === 0) return [];
+  const pool = getPool();
+  const { rows } = await pool.query<PipelineRunRow>(
+    'SELECT * FROM dispute_pipeline_runs WHERE id = ANY($1)',
+    [ids],
+  );
+  return rows;
+}
+
 export async function deletePipelineRun(id: number): Promise<number> {
   const pool = getPool();
   const result = await pool.query('DELETE FROM dispute_pipeline_runs WHERE id = $1', [id]);
   return result.rowCount ?? 0;
+}
+
+// --- Dataset Cases ---
+
+export async function insertDatasetCase(
+  caseId: number,
+  segment: string,
+  pipelineRunId: number | null,
+): Promise<DatasetCaseRow> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetCaseRow>(
+    `INSERT INTO dataset_cases (case_id, segment, pipeline_run_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (case_id) DO NOTHING
+     RETURNING *`,
+    [caseId, segment, pipelineRunId],
+  );
+  // If ON CONFLICT hit, return the existing row
+  if (!rows[0]) {
+    const { rows: existing } = await pool.query<DatasetCaseRow>(
+      `SELECT * FROM dataset_cases WHERE case_id = $1`,
+      [caseId],
+    );
+    return existing[0]!;
+  }
+  return rows[0];
+}
+
+export async function listDatasetCases(segment?: string): Promise<DatasetCaseRow[]> {
+  await ensureMigrations();
+  const pool = getPool();
+  if (segment) {
+    const { rows } = await pool.query<DatasetCaseRow>(
+      `SELECT * FROM dataset_cases WHERE segment = $1 ORDER BY created_at DESC`,
+      [segment],
+    );
+    return rows;
+  }
+  const { rows } = await pool.query<DatasetCaseRow>(
+    `SELECT * FROM dataset_cases ORDER BY created_at DESC`,
+  );
+  return rows;
+}
+
+export async function updateDatasetLabel(
+  id: number,
+  label: DatasetLabel,
+  notes: string | null,
+  labeledBy: string | null,
+): Promise<DatasetCaseRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetCaseRow>(
+    `UPDATE dataset_cases
+     SET label = $1, label_notes = $2, labeled_by = $3, labeled_at = now()
+     WHERE id = $4
+     RETURNING *`,
+    [label, notes, labeledBy, id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteDatasetCase(id: number): Promise<number> {
+  await ensureMigrations();
+  const pool = getPool();
+  const result = await pool.query('DELETE FROM dataset_cases WHERE id = $1', [id]);
+  return result.rowCount ?? 0;
+}
+
+export async function getDatasetSegmentCounts(): Promise<
+  Array<{ segment: string; total_count: number; labeled_count: number }>
+> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<{
+    segment: string;
+    total_count: string;
+    labeled_count: string;
+  }>(
+    `SELECT segment,
+            COUNT(*)::text AS total_count,
+            COUNT(label)::text AS labeled_count
+     FROM dataset_cases
+     GROUP BY segment`,
+  );
+  return rows.map((r) => ({
+    segment: r.segment,
+    total_count: parseInt(r.total_count, 10),
+    labeled_count: parseInt(r.labeled_count, 10),
+  }));
+}
+
+export async function getExistingDatasetCaseIds(caseIds: number[]): Promise<Set<number>> {
+  if (caseIds.length === 0) return new Set();
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<{ case_id: number }>(
+    `SELECT case_id FROM dataset_cases WHERE case_id = ANY($1)`,
+    [caseIds],
+  );
+  return new Set(rows.map((r) => r.case_id));
 }
 
 export async function closePool(): Promise<void> {
