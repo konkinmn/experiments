@@ -226,11 +226,11 @@ Export button: XLSX with case_id, segment, pipeline decision, label, notes, rubr
 
 ### Task 7: Integration test
 
-- [ ] Navigate to `/dataset`
-- [ ] Select "Clear credit" segment, click "Load cases" — verify pipeline runs for multiple cases and cards appear
-- [ ] Label one case as "Credit" — verify label persists on reload
-- [ ] Label one case as "Needs more info" with a note — verify note saves
-- [ ] Select "Hard gate" segment, load cases — verify at least one hard-gated case appears
-- [ ] Export XLSX — verify it contains segment column and label column
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Navigate to `/dataset`
+- [x] Select "Clear credit" segment, click "Load cases" — verify pipeline runs for multiple cases and cards appear
+- [x] Label one case as "Credit" — verify label persists on reload
+- [x] Label one case as "Needs more info" with a note — verify note saves
+- [x] Select "Hard gate" segment, load cases — verify at least one hard-gated case appears
+- [x] Export XLSX — verify it contains segment column and label column
+- [x] Run validation commands
+- [x] Mark completed
