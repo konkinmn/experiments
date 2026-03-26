@@ -39,6 +39,7 @@ const MEDIA_BASE_URL = process.env.MEDIA_BASE_URL || 'https://media.k1.anna.mone
 const TASKS_BASE_URL = process.env.TASKS_BASE_URL || 'https://tasks.k1.anna.money';
 const CHAT_BASE_URL = process.env.CHAT_BASE_URL || 'https://chat.k1.anna.money';
 const API_TOKEN = process.env.API_TOKEN || '';
+const FETCH_TIMEOUT_MS = 30_000;
 
 export async function fetchCaseTimeline(caseId: number): Promise<CaseTimeline> {
   const url = `${CASE_API_BASE_URL}/api/workstation/cases/${caseId}/timeline`;
@@ -48,6 +49,7 @@ export async function fetchCaseTimeline(caseId: number): Promise<CaseTimeline> {
       Authorization: `Bearer ${API_TOKEN}`,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -69,6 +71,7 @@ export async function fetchCaseDetails(caseId: number): Promise<CaseDetails> {
       Authorization: `Bearer ${API_TOKEN}`,
       'Content-Type': 'application/json',
     },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -114,6 +117,7 @@ export async function fetchFilteredCaseIds(params: FetchCasesParams): Promise<nu
         Authorization: `Bearer ${API_TOKEN}`,
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -150,6 +154,7 @@ export async function fetchArtifactAsBase64(artifactId: string): Promise<Artifac
       headers: {
         Authorization: `Bearer ${API_TOKEN}`,
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!metaResponse.ok) {
@@ -176,6 +181,7 @@ export async function fetchArtifactAsBase64(artifactId: string): Promise<Artifac
       headers: {
         Authorization: `Bearer ${API_TOKEN}`,
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!mediaResponse.ok) {
@@ -201,6 +207,7 @@ export async function fetchCaseActions(caseId: number): Promise<CaseAction[]> {
         Authorization: `Bearer ${API_TOKEN}`,
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -244,6 +251,7 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
         Authorization: `Bearer ${API_TOKEN}`,
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!dialoguesResponse.ok) {
@@ -267,6 +275,7 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
             Authorization: `Bearer ${API_TOKEN}`,
             'Content-Type': 'application/json',
           },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
         if (!messagesResponse.ok) {
@@ -275,7 +284,7 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
         }
 
         const messagesBody = await messagesResponse.json() as {
-          data?: Array<{ id: number }>;
+          data?: Array<{ dialogue_id: number; message_id: string }>;
         };
         const messageRecords = messagesBody.data || [];
         if (messageRecords.length === 0) continue;
@@ -283,13 +292,14 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
         metadata.dialogues_with_messages++;
 
         // Step 3: Get message content from chat service
-        const messageIdParams = messageRecords.map((m) => `id[]=${encodeURIComponent(m.id)}`).join('&');
-        const chatUrl = `${CHAT_BASE_URL}/api/2/user/${encodeURIComponent(dialogue.alias)}/messages?${messageIdParams}`;
+        const messageIdParams = messageRecords.map((m) => `id[]=${m.message_id}`).join('&');
+        const chatUrl = `${CHAT_BASE_URL}/api/2/user/${dialogue.alias}/messages?${messageIdParams}`;
         const chatResponse = await fetch(chatUrl, {
           headers: {
             Authorization: `Bearer ${API_TOKEN}`,
             'Content-Type': 'application/json',
           },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
         if (!chatResponse.ok) {
@@ -307,21 +317,22 @@ export async function fetchCaseDialogues(artifactIds: string[]): Promise<Dialogu
         }
 
         const chatBody = await chatResponse.json() as {
-          data?: Array<{
-            sender_type?: string;
-            text?: string;
-            created_at?: string;
+          messages?: Array<{
+            sender?: { name?: string; is_client?: boolean; role?: string };
+            message?: string | null;
+            created_at?: number;
+            timestamp?: string;
             is_hidden?: boolean;
           }>;
         };
-        const chatMessages = chatBody.data || [];
+        const chatMessages = chatBody.messages || [];
 
         for (const msg of chatMessages) {
           if (msg.is_hidden) continue;
           allMessages.push({
-            role: msg.sender_type || 'unknown',
-            content: msg.text || '',
-            created_at: msg.created_at || '',
+            role: msg.sender?.role || msg.sender?.name || 'unknown',
+            content: msg.message || '',
+            created_at: msg.timestamp || (msg.created_at ? new Date(msg.created_at).toISOString() : ''),
           });
         }
       } catch (err) {

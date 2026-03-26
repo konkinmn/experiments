@@ -32,7 +32,6 @@ function formatRow(row: PipelineRunRow) {
     fileParseResults: row.file_parse_results,
     dialogueMessages: row.dialogue_messages,
     enrichmentMetadata: row.enrichment_metadata,
-    evidenceArtifacts: row.evidence_artifacts,
     caseActions: row.case_actions,
     reviewerVerdict: row.reviewer_verdict,
     reviewerNotes: row.reviewer_notes,

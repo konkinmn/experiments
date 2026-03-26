@@ -17,6 +17,7 @@ import type {
 } from '../types/dispute-pipeline.js';
 
 const PROMPT_ID = 'dispute-planner-v1';
+const MAX_DIALOGUE_MESSAGES = 50;
 
 const FILE_PARSER_SYSTEM_PROMPT = `Your task is to analyze an uploaded document, detect its type, and extract structured data.
 
@@ -99,10 +100,12 @@ function computeRubricScore(raw: CaseSignalsRaw): RubricScoreResult {
   // Category 3 — Transaction Risk (max 20)
   let transactionRisk = 0;
   const amount = Number(raw.max_transaction_amount);
-  if (amount < 5) transactionRisk += 20;
-  else if (amount < 10) transactionRisk += 14;
-  else if (amount < 15) transactionRisk += 9;
-  else if (amount <= 25) transactionRisk += 5;
+  if (!isNaN(amount)) {
+    if (amount < 5) transactionRisk += 20;
+    else if (amount < 10) transactionRisk += 14;
+    else if (amount < 15) transactionRisk += 9;
+    else if (amount <= 25) transactionRisk += 5;
+  }
 
   return {
     total: accountTrust + disputeHistory + transactionRisk,
@@ -182,29 +185,40 @@ function filterCaseArtifacts(artifacts: unknown[]): unknown[] {
   });
 }
 
-const PlannerOutputSchema = z.object({
-  thought: z.string(),
-  decision: z.enum(['credit', 'escalate_to_agent']),
-  credit_timing: z.enum(['immediately', 'none']),
-  args: z.object({
-    is_dispute: z.literal(false),
-    is_fraud: z.boolean(),
-    credit_mode: z.literal('IMMEDIATELY'),
-    reason: z.enum(['NOT_AUTHORISED', 'DIFFERENT_AMOUNT', 'DUPLICATE', 'NO_FUNDS_FROM_ATM', 'OTHER']),
-    fraud_type: z.enum([
-      'LOST_CARD_FRAUD', 'STOLEN_CARD_FRAUD', 'COUNTERFEIT_CARD_FRAUD',
-      'ACCOUNT_TAKEOVER_FRAUD', 'CARD_NOT_PRESENT_FRAUD', 'BUST_OUT_COLLUSIVE_MERCHANT',
-      'FIRST_PARTY', 'MODIFICATION_OF_PAYMENT_ORDER', 'MANIPULATION_OF_CARDHOLDER',
-      'PAYMENT_CREATED_BY_FRAUDSTER', 'MANIPULATION_OF_PAYER_BY_FRAUDSTER',
-    ]).optional(),
-    fraud_sub_type: z.enum([
-      'CONVENIENCE_OR_BALANCE_TRANSFER', 'PIN_NOT_USED', 'PIN_USED', 'UNKNOWN',
-      'ADVANCE_FEE', 'IMPERSONATION', 'INVESTMENT', 'PURCHASE', 'ROMANCE',
-    ]).optional(),
-    crime_reference: z.string().optional(),
-  }).optional(),
-  uncertainty_factors: z.array(z.string()),
+const PlannerArgsSchema = z.object({
+  is_dispute: z.literal(false),
+  is_fraud: z.boolean(),
+  credit_mode: z.literal('IMMEDIATELY'),
+  reason: z.enum(['NOT_AUTHORISED', 'DIFFERENT_AMOUNT', 'DUPLICATE', 'NO_FUNDS_FROM_ATM', 'OTHER']),
+  fraud_type: z.enum([
+    'LOST_CARD_FRAUD', 'STOLEN_CARD_FRAUD', 'COUNTERFEIT_CARD_FRAUD',
+    'ACCOUNT_TAKEOVER_FRAUD', 'CARD_NOT_PRESENT_FRAUD', 'BUST_OUT_COLLUSIVE_MERCHANT',
+    'FIRST_PARTY', 'MODIFICATION_OF_PAYMENT_ORDER', 'MANIPULATION_OF_CARDHOLDER',
+    'PAYMENT_CREATED_BY_FRAUDSTER', 'MANIPULATION_OF_PAYER_BY_FRAUDSTER',
+  ]).optional(),
+  fraud_sub_type: z.enum([
+    'CONVENIENCE_OR_BALANCE_TRANSFER', 'PIN_NOT_USED', 'PIN_USED', 'UNKNOWN',
+    'ADVANCE_FEE', 'IMPERSONATION', 'INVESTMENT', 'PURCHASE', 'ROMANCE',
+  ]).optional(),
+  crime_reference: z.string().optional(),
 });
+
+const PlannerOutputSchema = z.discriminatedUnion('decision', [
+  z.object({
+    thought: z.string(),
+    decision: z.literal('credit'),
+    credit_timing: z.literal('immediately'),
+    args: PlannerArgsSchema,
+    uncertainty_factors: z.array(z.string()),
+  }),
+  z.object({
+    thought: z.string(),
+    decision: z.literal('escalate_to_agent'),
+    credit_timing: z.literal('none'),
+    args: z.undefined().optional(),
+    uncertainty_factors: z.array(z.string()),
+  }),
+]);
 
 function parseJson(raw: string): unknown {
   // Try direct parse
@@ -304,7 +318,7 @@ async function fetchAndParseFileArtifacts(
         parsedDescriptions.push('[File could not be parsed]');
       }
     }
-    console.log('[Planner] Parsed file descriptions:', JSON.stringify(parsedDescriptions, null, 2));
+    console.log(`[Planner] Parsed ${parsedDescriptions.length} file description(s): [${parsedDescriptions.map(d => `${d.length} chars`).join(', ')}]`);
   }
 
   return parsedDescriptions;
@@ -466,7 +480,6 @@ export async function runDisputePipeline(caseId: number): Promise<PipelineRunRow
     const allCustomerMessages = filterCustomerMessages(dialoguesFetchResult.messages);
     // Sort by time so the most recent messages are at the end, then take last N
     allCustomerMessages.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    const MAX_DIALOGUE_MESSAGES = 50;
     const customerDialogueMessages = allCustomerMessages.slice(-MAX_DIALOGUE_MESSAGES);
 
     console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialoguesFetchResult.messages.length} (customer: ${allCustomerMessages.length}, sent to planner: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);

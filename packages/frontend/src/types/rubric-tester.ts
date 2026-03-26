@@ -105,7 +105,6 @@ export interface PipelineResult {
     file_artifacts_found?: number;
     file_descriptions_parsed?: number;
   } | null;
-  evidenceArtifacts: unknown | null;
   reviewerVerdict: 'correct' | 'incorrect' | null;
   reviewerNotes: string | null;
   reviewedAt: string | null;

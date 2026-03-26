@@ -33,8 +33,9 @@ const LLM_API_BASE_URL = process.env.LLM_API_BASE_URL || '';
 const LLM_PROVIDER = process.env.LLM_PROVIDER || 'ANTHROPIC';
 const LLM_MODEL = process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929';
 
-const FILE_PARSE_PROVIDER = 'GOOGLE';
-const FILE_PARSE_MODEL = 'gemini-2.5-flash';
+const FILE_PARSE_PROVIDER = process.env.FILE_PARSE_PROVIDER || 'GOOGLE';
+const FILE_PARSE_MODEL = process.env.FILE_PARSE_MODEL || 'gemini-2.5-flash';
+const LLM_FETCH_TIMEOUT_MS = 120_000;
 
 interface ChatResponse {
   data?: {
@@ -62,6 +63,7 @@ export async function analyzeWithLLM(messages: Message[]): Promise<LLMResponse> 
       seed: 777,
       max_tokens: 4096,
     }),
+    signal: AbortSignal.timeout(LLM_FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -123,6 +125,7 @@ export async function parseFileWithLLM(
       temperature: 0.2,
       max_tokens: 4096,
     }),
+    signal: AbortSignal.timeout(LLM_FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
