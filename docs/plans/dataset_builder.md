@@ -16,7 +16,7 @@ The output is a labeled dataset used to measure Planner accuracy before enabling
 
 ### Task 1: DB migration — dataset tables
 
-- [ ] Create `init-db/005-dataset-builder.sql` with two tables:
+- [x] Create `init-db/006-dataset-builder.sql` with two tables:
 
 ```sql
 CREATE TABLE IF NOT EXISTS dataset_cases (
@@ -36,8 +36,8 @@ CREATE INDEX idx_dataset_cases_segment ON dataset_cases(segment);
 CREATE INDEX idx_dataset_cases_label ON dataset_cases(label);
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
