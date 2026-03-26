@@ -37,7 +37,7 @@ Generated on dispute form submission. Saved to case in WorkStation. Built by Int
     transaction_amount: number
     merchant: string
   }
-  risk_factors: string[]         // human-readable flags e.g. "Amber trust score"
+  risk_factors: string[]         // human-readable flags e.g. "Blue trust score"
 }
 ```
 
@@ -55,7 +55,7 @@ Category 1 — Account Trust (max 58):
 - Account age ≥ 365d → 20, ≥ 180d → 12, ≥ 90d → 5
 - Tier E → +10, D → +8, C → +5, B → 0
 - Money Maker → +15
-- Trust score GREEN → +8, BLUE → +4, AMBER → 0
+- Trust score GREEN → +8, AMBER → +4, BLUE → 0
 - tx_count_90_days ≥ 5 → +5
 
 Category 2 — Dispute History (max 30):
@@ -68,6 +68,27 @@ Category 3 — Transaction Risk (max 20):
 - Amount < £5 → 20, < £10 → 14, < £15 → 9, ≤ £25 → 5
 
 **Tier eligibility note:** Tier C, D, E are all eligible customers. Only Tier B indicates an unestablished account.
+
+## Eval dataset accuracy
+
+> **Note: eval harness only.** The following applies to historical case testing in the
+> eval harness. In production, the pipeline runs at the moment of form submission, so
+> `CURRENT_TIMESTAMP()` and `case_created_at` are effectively the same. No separate
+> production handling is needed.
+
+All time-sensitive signals are calculated relative to `case_created_at`, not
+`CURRENT_TIMESTAMP()`. This ensures historical test cases return the signals as they
+were at filing time, not today.
+
+| Signal | Historical fix |
+|---|---|
+| `account_age_days` | `DATE_DIFF(DATE(case_created_at), DATE(account.created_at), DAY)` |
+| `tx_count_90_days`, `active_months`, `prior_payments_to_merchant` | Window: `[case_created_at - 90d, case_created_at)` |
+| `railsr_disputes_last_6_months` | Window: `[case_created_at - 6m, case_created_at)` |
+| `railsr_disputes_last_30_days` | Window: `[case_created_at - 30d, case_created_at)` |
+| `scammer_count`, `scam_victim_count` | Upper bound: `created_at < case_created_at` |
+| `tier` | `compliance_customer_tier_log` — prev_tier_name logic with COALESCE fallback |
+| `trust_score` | `expiring_tables.compliance_trust_score_changes WHERE day <= DATE(case_created_at)` |
 
 ---
 

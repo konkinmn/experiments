@@ -31,6 +31,13 @@ All of the following must be true:
 
 A wrong escalation costs agent time. A wrong credit costs money and regulatory risk. When in doubt, escalate.
 
+## Trust score levels
+
+The `trust_score` field in the dispute profile uses these levels (from the compliance scoring system):
+- **GREEN** (score 15+) — highest trust, well-established account
+- **AMBER** (score 6–14) — medium trust
+- **BLUE** (score 0–5) — lowest trust, treat as a risk factor
+
 ## Constraints
 
 - Use ONLY the signals provided in the dispute profile and case details. Never infer or invent values.

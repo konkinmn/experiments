@@ -28,7 +28,7 @@ case_merchants AS (
 account_data AS (
   SELECT
     ac.created AS account_created_at,
-    DATE_DIFF(CURRENT_DATE(), DATE(ac.created), DAY) AS account_age_days,
+    DATE_DIFF(DATE((SELECT case_created_at FROM case_data)), DATE(ac.created), DAY) AS account_age_days,
     ac.status AS account_status
   FROM \`anna-money.export.account_customer\` ac
   WHERE ac.magneta_alias = (SELECT alias FROM case_data)
@@ -40,10 +40,26 @@ cifas_data AS (
   WHERE cm.alias = (SELECT alias FROM case_data)
 ),
 tier_data AS (
-  SELECT tl.tier_name
-  FROM \`anna-money.verified_views.compliance_tier_limits\` tl
-  WHERE tl.company_id = (SELECT company_id FROM case_data)
-  LIMIT 1
+  SELECT COALESCE(
+    -- tier at filing: prev_tier of first change AFTER case_created_at
+    (SELECT prev_tier_name
+     FROM \`anna-money.verified_views.compliance_customer_tier_log\`
+     WHERE company_id = (SELECT company_id FROM case_data)
+       AND event_timestamp > (SELECT case_created_at FROM case_data)
+     ORDER BY event_timestamp ASC
+     LIMIT 1),
+    -- no change after filing: most recent tier is correct
+    (SELECT tier_name
+     FROM \`anna-money.verified_views.compliance_customer_tier_log\`
+     WHERE company_id = (SELECT company_id FROM case_data)
+     ORDER BY event_timestamp DESC
+     LIMIT 1),
+    -- no log at all: fall back to current tier from limits table
+    (SELECT tier_name
+     FROM \`anna-money.verified_views.compliance_tier_limits\`
+     WHERE company_id = (SELECT company_id FROM case_data)
+     LIMIT 1)
+  ) AS tier_name
 ),
 money_maker AS (
   SELECT COUNT(*) AS is_money_maker
@@ -53,10 +69,11 @@ money_maker AS (
     AND b.badge_id = 2
 ),
 trust_score_data AS (
-  SELECT score AS trust_score
-  FROM \`anna-money.export.checklist_trust_score\`
+  SELECT score_color AS trust_score
+  FROM \`anna-money.expiring_tables.compliance_trust_score_changes\`
   WHERE company_id = (SELECT company_id FROM case_data)
-  ORDER BY created DESC
+    AND day <= DATE((SELECT case_created_at FROM case_data))
+  ORDER BY day DESC
   LIMIT 1
 ),
 scam_scammer AS (
@@ -64,12 +81,14 @@ scam_scammer AS (
   FROM \`anna-money.export.task_manager_agent_tasks\` t
   WHERE t.alias = (SELECT alias FROM case_data)
     AND t.group_id = 'd33eb1ad-5190-44d0-9ff5-af7119b3cd19'
+    AND t.created_at < (SELECT case_created_at FROM case_data)
 ),
 scam_victim AS (
   SELECT COUNT(*) AS victim_count
   FROM \`anna-money.export.task_manager_agent_tasks\` t
   WHERE t.alias = (SELECT alias FROM case_data)
     AND t.group_id = '58447710-7eb4-4ae0-ac01-1761786a3d41'
+    AND t.created_at < (SELECT case_created_at FROM case_data)
 ),
 transaction_activity AS (
   SELECT
@@ -78,18 +97,18 @@ transaction_activity AS (
     COUNTIF(t.merchant_info_name IN (SELECT merchant_info_name FROM case_merchants)) AS prior_payments_to_merchant
   FROM \`anna-money.trusted.business_account__processed_transactions\` t
   WHERE t.alias = (SELECT alias FROM case_data)
-    AND t.post_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)
+    AND t.post_timestamp >= TIMESTAMP_SUB((SELECT case_created_at FROM case_data), INTERVAL 90 DAY)
     AND t.post_timestamp < (SELECT case_created_at FROM case_data)
 ),
 dispute_history AS (
   SELECT
     COUNT(*) AS railsr_disputes_last_6_months,
-    COUNTIF(t.created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)) AS railsr_disputes_last_30_days
+    COUNTIF(t.created_at >= TIMESTAMP_SUB((SELECT case_created_at FROM case_data), INTERVAL 30 DAY)) AS railsr_disputes_last_30_days
   FROM \`anna-money.export.task_manager_agent_tasks\` t
   WHERE
     t.alias = (SELECT alias FROM case_data)
     AND t.task_type = 'DISPUTE'
-    AND t.created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 180 DAY)
+    AND t.created_at >= TIMESTAMP(DATETIME_SUB(DATETIME((SELECT case_created_at FROM case_data)), INTERVAL 6 MONTH))
     AND t.created_at < (SELECT case_created_at FROM case_data)
 )
 SELECT
