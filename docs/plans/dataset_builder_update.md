@@ -16,7 +16,7 @@ This replaces the current hardcoded segment tabs with a flexible dataset managem
 
 ### Task 1: DB migration — dataset tables
 
-- [ ] Create `init-db/005-dataset-builder.sql`:
+- [x] Create `init-db/007-datasets-table.sql` (used 007 since 005/006 already exist):
 
 ```sql
 CREATE TABLE IF NOT EXISTS datasets (
@@ -45,8 +45,8 @@ CREATE INDEX idx_dataset_cases_dataset_id ON dataset_cases(dataset_id);
 CREATE INDEX idx_dataset_cases_label ON dataset_cases(label);
 ```
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
