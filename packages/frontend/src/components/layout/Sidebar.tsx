@@ -6,7 +6,7 @@ export function Sidebar() {
   const location = useLocation();
   const isTimelineAnalyzerActive = location.pathname === '/timeline-analyzer';
   const isRubricTesterActive = location.pathname === '/rubric-tester';
-  const isDatasetBuilderActive = location.pathname === '/dataset';
+  const isDatasetBuilderActive = location.pathname.startsWith('/dataset');
 
   return (
     <aside className="w-64 border-r border-gray-200 bg-white flex flex-col h-full">

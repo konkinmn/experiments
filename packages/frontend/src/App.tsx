@@ -13,6 +13,7 @@ function App() {
         <Route path="/timeline-analyzer" element={<TimelineAnalyzer />} />
         <Route path="/rubric-tester" element={<RubricTester />} />
         <Route path="/dataset" element={<DatasetBuilder />} />
+        <Route path="/dataset/:id" element={<div>Dataset detail (coming soon)</div>} />
       </Routes>
     </div>
   );

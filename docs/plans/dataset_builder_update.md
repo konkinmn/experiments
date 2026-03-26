@@ -219,9 +219,9 @@ interface PresetInfo {
 
 ### Task 5: Frontend — Datasets list page
 
-- [ ] Create `packages/frontend/src/pages/DatasetBuilder.tsx` — the datasets list
-- [ ] Register route `/dataset` in `App.tsx`
-- [ ] Add sidebar link "Dataset Builder" in `Sidebar.tsx`
+- [x] Create `packages/frontend/src/pages/DatasetBuilder.tsx` — the datasets list
+- [x] Register route `/dataset` in `App.tsx`
+- [x] Add sidebar link "Dataset Builder" in `Sidebar.tsx`
 
 **Layout:**
 
@@ -252,8 +252,8 @@ When Custom SQL selected: monospace textarea for BQ SQL, with note "Query must r
 
 "Create" button — on submit, calls `POST /api/datasets`, closes modal, navigates to new dataset page.
 
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Run validation commands
+- [x] Mark completed
 
 ---
 
