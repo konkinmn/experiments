@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { runDisputePipeline } from '../services/dispute-pipeline.js';
 import { listPipelineRuns, updatePipelineReview, deletePipelineRun } from '../services/db.js';
-import type { PipelineRunRow } from '../types/dispute-pipeline.js';
+import { formatPipelineRun } from '../types/dispute-pipeline.js';
 
 const RunSchema = z.object({
   caseId: z.number().int().positive(),
@@ -13,40 +13,13 @@ const ReviewSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
-function formatRow(row: PipelineRunRow) {
-  return {
-    id: row.id,
-    caseId: row.case_id,
-    rawSignals: row.raw_signals,
-    caseDetails: row.case_details,
-    disputeProfile: row.dispute_profile,
-    hardGates: row.hard_gates,
-    hardGateTriggered: row.hard_gate_triggered,
-    plannerOutput: row.planner_output,
-    executorAction: row.executor_action,
-    pipelineDurationMs: row.pipeline_duration_ms,
-    promptVersion: row.prompt_version,
-    plannerRawResponse: row.planner_raw_response,
-    plannerRequest: row.planner_request,
-    plannerSystemPrompt: row.planner_system_prompt,
-    fileParseResults: row.file_parse_results,
-    dialogueMessages: row.dialogue_messages,
-    enrichmentMetadata: row.enrichment_metadata,
-    caseActions: row.case_actions,
-    reviewerVerdict: row.reviewer_verdict,
-    reviewerNotes: row.reviewer_notes,
-    reviewedAt: row.reviewed_at,
-    createdAt: row.created_at,
-  };
-}
-
 export async function disputePipelineRoutes(app: FastifyInstance) {
   // POST /run — Run pipeline for a single case
   app.post('/run', async (request, reply) => {
     try {
       const body = RunSchema.parse(request.body);
       const row = await runDisputePipeline(body.caseId);
-      return formatRow(row);
+      return formatPipelineRun(row);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
@@ -69,7 +42,7 @@ export async function disputePipelineRoutes(app: FastifyInstance) {
   // GET /results — List all pipeline runs
   app.get('/results', async () => {
     const rows = await listPipelineRuns();
-    return { data: rows.map(formatRow) };
+    return { data: rows.map(formatPipelineRun) };
   });
 
   // PATCH /results/:id/review — Submit reviewer verdict
@@ -85,7 +58,7 @@ export async function disputePipelineRoutes(app: FastifyInstance) {
       if (!row) {
         return reply.status(404).send({ error: 'Pipeline run not found' });
       }
-      return formatRow(row);
+      return formatPipelineRun(row);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });

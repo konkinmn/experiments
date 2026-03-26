@@ -1,8 +1,6 @@
 import { getBigQueryService } from './bigquery.js';
 import type { PresetInfo } from '../types/dispute-pipeline.js';
 
-export type { PresetInfo };
-
 interface PresetDefinition extends PresetInfo {
   query: string;
 }
@@ -41,7 +39,15 @@ LEFT JOIN \`anna-money.export.cifas_matches\` cf ON cf.alias = c.alias
 WHERE c.issue_type_id = 'dispute'
   AND c.status = 'RESOLVED'
   AND c.created_at >= TIMESTAMP('2026-01-01')
-  AND cf.id IS NOT NULL
+  AND (
+    cf.id IS NOT NULL
+    OR EXISTS (
+      SELECT 1
+      FROM \`anna-money.export.task_manager_agent_tasks\` scam
+      WHERE scam.alias = c.alias
+        AND scam.group_id = 'd33eb1ad-5190-44d0-9ff5-af7119b3cd19'
+    )
+  )
 ORDER BY c.created_at DESC
 LIMIT 20`,
   },
@@ -53,8 +59,6 @@ LIMIT 20`,
     query: `
 SELECT DISTINCT c.id AS case_id
 FROM \`anna-money.export.case_case\` c
-JOIN \`anna-money.trusted.business_account__processed_transactions\` t
-  ON t.alias = c.alias
 WHERE c.issue_type_id = 'dispute'
   AND c.status = 'RESOLVED'
   AND c.created_at >= TIMESTAMP('2026-01-01')
@@ -118,14 +122,12 @@ export async function runPresetQuery(key: string): Promise<number[]> {
   return rows.map((r) => r.case_id);
 }
 
-// Backward-compatible exports — used by existing routes until Task 3 rewrites them
-export const SEGMENTS = getPresets();
-
-export async function fetchSegmentCaseIds(segment: string): Promise<number[]> {
-  return runPresetQuery(segment);
-}
-
 export async function runCustomSql(sql: string): Promise<number[]> {
+  const trimmed = sql.trim().toUpperCase();
+  if (!trimmed.startsWith('SELECT')) {
+    throw new Error('Only SELECT queries are allowed');
+  }
+
   const bq = getBigQueryService();
   const rows = await bq.query<Record<string, unknown>>(sql);
 

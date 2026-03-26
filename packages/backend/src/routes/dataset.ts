@@ -14,7 +14,8 @@ import {
   deleteDatasetCase,
   getPipelineRunsByIds,
 } from '../services/db.js';
-import type { PipelineRunRow, DatasetCaseRow } from '../types/dispute-pipeline.js';
+import { formatPipelineRun } from '../types/dispute-pipeline.js';
+import type { PipelineRunRow, DatasetCaseRow, DatasetRow } from '../types/dispute-pipeline.js';
 
 const CreateDatasetSchema = z.object({
   name: z.string().min(1),
@@ -29,30 +30,16 @@ const LabelSchema = z.object({
   labeledBy: z.string().nullable().optional(),
 });
 
-function formatPipelineRun(row: PipelineRunRow) {
+function formatDataset(d: DatasetRow & { total_cases?: number; labeled_cases?: number }) {
   return {
-    id: row.id,
-    caseId: row.case_id,
-    rawSignals: row.raw_signals,
-    caseDetails: row.case_details,
-    disputeProfile: row.dispute_profile,
-    hardGates: row.hard_gates,
-    hardGateTriggered: row.hard_gate_triggered,
-    plannerOutput: row.planner_output,
-    executorAction: row.executor_action,
-    pipelineDurationMs: row.pipeline_duration_ms,
-    promptVersion: row.prompt_version,
-    plannerRawResponse: row.planner_raw_response,
-    plannerRequest: row.planner_request,
-    plannerSystemPrompt: row.planner_system_prompt,
-    fileParseResults: row.file_parse_results,
-    dialogueMessages: row.dialogue_messages,
-    enrichmentMetadata: row.enrichment_metadata,
-    caseActions: row.case_actions,
-    reviewerVerdict: row.reviewer_verdict,
-    reviewerNotes: row.reviewer_notes,
-    reviewedAt: row.reviewed_at,
-    createdAt: row.created_at,
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    sourceType: d.source_type,
+    sourceConfig: d.source_config,
+    createdAt: d.created_at,
+    ...(d.total_cases !== undefined ? { totalCases: d.total_cases } : {}),
+    ...(d.labeled_cases !== undefined ? { labeledCases: d.labeled_cases } : {}),
   };
 }
 
@@ -103,16 +90,7 @@ export async function datasetRoutes(app: FastifyInstance) {
   app.get('/', async () => {
     const datasets = await listDatasets();
     return {
-      data: datasets.map((d) => ({
-        id: d.id,
-        name: d.name,
-        description: d.description,
-        sourceType: d.source_type,
-        sourceConfig: d.source_config,
-        totalCases: d.total_cases,
-        labeledCases: d.labeled_cases,
-        createdAt: d.created_at,
-      })),
+      data: datasets.map((d) => formatDataset(d)),
     };
   });
 
@@ -154,6 +132,9 @@ export async function datasetRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: `Failed to resolve case IDs: ${message}` });
       }
 
+      // Deduplicate case IDs
+      caseIds = [...new Set(caseIds)];
+
       if (caseIds.length === 0) {
         return reply.status(400).send({ error: 'No case IDs resolved from source' });
       }
@@ -188,14 +169,9 @@ export async function datasetRoutes(app: FastifyInstance) {
       });
 
       return reply.status(201).send({
-        id: dataset.id,
-        name: dataset.name,
-        description: dataset.description,
-        sourceType: dataset.source_type,
-        sourceConfig: dataset.source_config,
+        ...formatDataset(dataset),
         totalCases: datasetCases.length,
         labeledCases: 0,
-        createdAt: dataset.created_at,
         status: 'loading',
       });
     } catch (error) {
@@ -231,12 +207,7 @@ export async function datasetRoutes(app: FastifyInstance) {
     });
 
     return {
-      id: dataset.id,
-      name: dataset.name,
-      description: dataset.description,
-      sourceType: dataset.source_type,
-      sourceConfig: dataset.source_config,
-      createdAt: dataset.created_at,
+      ...formatDataset(dataset),
       totalCases: cases.length,
       labeledCases: cases.filter((c) => c.label !== null).length,
       cases: formattedCases,

@@ -43,10 +43,11 @@ export function useDeleteDataset() {
   });
 }
 
-export function useDataset(id: number) {
+export function useDataset(id: number, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['dataset', id],
     queryFn: () => api.getDataset(id),
+    enabled: options?.enabled ?? true,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;

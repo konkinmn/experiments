@@ -105,6 +105,24 @@ async function applyMigrations(): Promise<void> {
         );
       }
     }
+    // Migration 007: datasets parent table (must be created before dataset_cases references it)
+    const { rows: datasetsTableRows } = await pool.query(
+      `SELECT 1 FROM information_schema.tables
+       WHERE table_name = 'datasets'`,
+    );
+    if (datasetsTableRows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS datasets (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          source_type TEXT NOT NULL CHECK (source_type IN ('preset', 'case_ids', 'custom_sql')),
+          source_config JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+    }
+
     // Migration 006: dataset_cases table
     const { rows: datasetTableRows } = await pool.query(
       `SELECT 1 FROM information_schema.tables
@@ -133,23 +151,6 @@ async function applyMigrations(): Promise<void> {
       );
     }
 
-    // Migration 007: datasets parent table + migrate dataset_cases
-    const { rows: datasetsTableRows } = await pool.query(
-      `SELECT 1 FROM information_schema.tables
-       WHERE table_name = 'datasets'`,
-    );
-    if (datasetsTableRows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS datasets (
-          id SERIAL PRIMARY KEY,
-          name TEXT NOT NULL,
-          description TEXT,
-          source_type TEXT NOT NULL CHECK (source_type IN ('preset', 'case_ids', 'custom_sql')),
-          source_config JSONB NOT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `);
-    }
     // Migrate dataset_cases if it still has old segment column
     const { rows: segmentColRows } = await pool.query(
       `SELECT 1 FROM information_schema.columns

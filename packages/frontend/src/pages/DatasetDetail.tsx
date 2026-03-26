@@ -34,7 +34,8 @@ export function DatasetDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const datasetId = Number(id);
-  const { data: dataset, isLoading, isError } = useDataset(datasetId);
+  const validId = !isNaN(datasetId) && datasetId > 0;
+  const { data: dataset, isLoading, isError } = useDataset(datasetId, { enabled: validId });
   const labelCase = useLabelDatasetCase();
   const deleteCase = useDeleteDatasetCase();
   const deleteDataset = useDeleteDataset();
@@ -83,7 +84,7 @@ export function DatasetDetail() {
     );
   }
 
-  if (isError || !dataset) {
+  if (!validId || isError || !dataset) {
     return (
       <div className="flex-1 p-6 bg-gray-50">
         <p className="text-sm text-red-600">Failed to load dataset.</p>

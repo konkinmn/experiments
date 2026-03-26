@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Summary
 
-Monorepo with two experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis) and a **Rubric Tester** (dispute pipeline evaluation). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
+Monorepo with three experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis), a **Rubric Tester** (dispute pipeline evaluation), and a **Dataset Builder** (ground-truth eval dataset construction with labeling). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
 
 ## Commands
 
@@ -37,7 +37,7 @@ No test framework is configured.
 
 - `src/server.ts` — Entry point, starts Fastify on PORT (default 3003)
 - `src/app.ts` — Fastify app factory, registers CORS and routes
-- `src/routes/` — Route handlers for timeline-analyzer, dispute-pipeline, health
+- `src/routes/` — Route handlers for timeline-analyzer, dispute-pipeline, dataset, health
 - `src/services/` — Core business logic:
   - `dispute-pipeline.ts` — 5-layer pipeline (signals → hard gates → planner → executor → verifier)
   - `case-api.ts` — External API client (case details, artifacts, actions, dialogues)
@@ -45,13 +45,14 @@ No test framework is configured.
   - `signals-query.ts` — Signal-fetching SQL queries
   - `llm-api.ts` — LLM proxy integration (Anthropic/OpenAI/Gemini)
   - `db.ts` — PostgreSQL connection pool, CRUD operations, auto-migrations
+  - `dataset-segments.ts` — Preset BigQuery segment queries and custom SQL execution for dataset building
   - `prompts.ts` — Loads prompt templates from `src/prompts/*.md`
 - `src/prompts/` — Markdown prompt files for LLM calls
 - `src/types/` — Zod schemas and TypeScript types
 
 ### Frontend (`packages/frontend`) — React 18, Vite 6, Tailwind CSS
 
-- `src/pages/` — Two main pages: `TimelineAnalyzer.tsx`, `RubricTester.tsx`
+- `src/pages/` — Four main pages: `TimelineAnalyzer.tsx`, `RubricTester.tsx`, `DatasetBuilder.tsx`, `DatasetDetail.tsx`
 - `src/components/` — UI components organized by feature (`timeline-analyzer/`, `rubric-tester/`, `charts/`, `ui/`, `layout/`)
 - `src/hooks/` — React Query hooks for API calls
 - `src/lib/` — Utility functions (xlsx export, cn helper)
@@ -70,6 +71,7 @@ The core domain logic in `dispute-pipeline.ts`:
 ### Database
 
 - PostgreSQL 16 (Docker Compose, port 5433, user/pass/db: `analytics`)
+- Tables: `analysis_jobs`, `dispute_pipeline_runs`, `datasets`, `dataset_cases`
 - Migrations in `init-db/` (SQL files) + runtime auto-migrations in `db.ts`
 - External volume: `anna-ws-analytics_pgdata`
 

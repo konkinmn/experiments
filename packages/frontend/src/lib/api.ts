@@ -28,7 +28,8 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
   });
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? `API error: ${response.status} ${response.statusText}`);
   }
 
   return response.json();

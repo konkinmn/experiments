@@ -146,6 +146,35 @@ export interface PipelineRunInsert {
   enrichment_metadata: Record<string, unknown> | null;
 }
 
+// --- Pipeline Run Formatter ---
+
+export function formatPipelineRun(row: PipelineRunRow) {
+  return {
+    id: row.id,
+    caseId: row.case_id,
+    rawSignals: row.raw_signals,
+    caseDetails: row.case_details,
+    disputeProfile: row.dispute_profile,
+    hardGates: row.hard_gates,
+    hardGateTriggered: row.hard_gate_triggered,
+    plannerOutput: row.planner_output,
+    executorAction: row.executor_action,
+    pipelineDurationMs: row.pipeline_duration_ms,
+    promptVersion: row.prompt_version,
+    plannerRawResponse: row.planner_raw_response,
+    plannerRequest: row.planner_request,
+    plannerSystemPrompt: row.planner_system_prompt,
+    fileParseResults: row.file_parse_results,
+    dialogueMessages: row.dialogue_messages,
+    enrichmentMetadata: row.enrichment_metadata,
+    caseActions: row.case_actions,
+    reviewerVerdict: row.reviewer_verdict,
+    reviewerNotes: row.reviewer_notes,
+    reviewedAt: row.reviewed_at,
+    createdAt: row.created_at,
+  };
+}
+
 // --- Dataset Builder types ---
 
 export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
@@ -171,8 +200,6 @@ export interface DatasetWithCounts extends DatasetRow {
   labeled_cases: number;
 }
 
-export type Dataset = DatasetWithCounts;
-
 export interface DatasetCaseRow {
   id: number;
   dataset_id: number;
@@ -189,4 +216,3 @@ export interface DatasetCaseWithRun extends DatasetCaseRow {
   pipeline_run: PipelineRunRow | null;
 }
 
-export type DatasetCase = DatasetCaseWithRun;
