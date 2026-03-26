@@ -278,12 +278,12 @@ On submit: `POST /api/datasets/:id/runs` with full config. Modal closes, new tab
 
 ### Task 9: Integration test
 
-- [ ] Open a dataset with labeled cases
-- [ ] Click `+ New run`, configure with default settings, create — verify run tab appears with loading state
-- [ ] Wait for completion — verify agreement metrics appear in tab header
-- [ ] Create second run with different model — verify two run tabs exist independently
-- [ ] Verify agreement indicator (✓/✗) appears per case in run tab
-- [ ] Verify labels tab shows ground truth only, no pipeline output
-- [ ] Verify rubric weight override changes scores in second run vs first
-- [ ] Run validation commands
-- [ ] Mark completed
+- [x] Open a dataset with labeled cases
+- [x] Click `+ New run`, configure with default settings, create — verify run tab appears with loading state
+- [x] Wait for completion — verify agreement metrics appear in tab header
+- [x] Create second run with different model — verify two run tabs exist independently
+- [x] Verify agreement indicator (✓/✗) appears per case in run tab
+- [x] Verify labels tab shows ground truth only, no pipeline output
+- [x] Verify rubric weight override changes scores in second run vs first
+- [x] Run validation commands
+- [x] Mark completed
