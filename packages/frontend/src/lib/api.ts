@@ -148,14 +148,4 @@ export const api = {
     return fetchApi<DatasetAnalytics>(`/api/datasets/${datasetId}/analytics${params}`);
   },
 
-  excludeDatasetCase: (id: number, excluded: boolean, reason?: string) =>
-    fetchApi<DatasetCase>(`/api/datasets/cases/${id}/exclude`, {
-      method: 'PATCH',
-      body: JSON.stringify({ excluded, reason: reason ?? null }),
-    }),
-
-  deriveAllTags: (datasetId: number) =>
-    fetchApi<{ updated: number }>(`/api/datasets/${datasetId}/derive-all-tags`, {
-      method: 'POST',
-    }),
 };

@@ -53,7 +53,7 @@ function SegmentTable({ data }: { data: Record<string, SegmentMetrics> }) {
             <td className="px-3 py-2 font-medium flex items-center gap-1.5">
               {segment}
               {metrics.sample_size < 10 && metrics.sample_size > 0 && (
-                <AlertTriangle className="h-3 w-3 text-amber-500" title="Small sample size" />
+                <AlertTriangle className="h-3 w-3 text-amber-500" />
               )}
             </td>
             <td className="px-3 py-2 text-center text-gray-500">{metrics.sample_size}</td>

@@ -1,6 +1,6 @@
 import type { PipelineResult } from './rubric-tester';
 
-export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
+export type DatasetLabel = 'credit' | 'escalate' | 'undecided';
 export type DatasetSourceType = 'case_ids' | 'custom_sql';
 
 export interface Dataset {
@@ -29,7 +29,6 @@ export interface DatasetCase {
   labelNotes: string | null;
   labeledBy: string | null;
   labeledAt: string | null;
-  excluded: boolean;
   autoTags: Record<string, string | boolean>;
   createdAt: string;
 }
@@ -102,7 +101,7 @@ export interface ConfusionMatrix {
   true_escalate: number;
   false_escalate: number;
   unlabeled: number;
-  needs_more_info: number;
+  undecided: number;
 }
 
 export interface DatasetAnalytics {

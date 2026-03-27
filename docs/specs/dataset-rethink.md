@@ -38,8 +38,6 @@ Enable the team to produce a safety report that shows: "The pipeline's false cre
 
 | Column | Type | Default | Purpose |
 |--------|------|---------|---------|
-| `excluded` | BOOLEAN | `false` | Mark cases as excluded from metrics without deleting |
-| `exclude_reason` | TEXT | `null` | Why the case was excluded |
 | `auto_tags` | JSONB | `'{}'` | Auto-derived metadata from pipeline output |
 
 #### Auto-tags schema
@@ -80,7 +78,7 @@ Computes analytics on-the-fly via SQL aggregation.
     true_escalate: number;    // Pipeline: escalate, Human: escalate
     false_escalate: number;   // Pipeline: escalate, Human: credit
     unlabeled: number;        // No human label
-    needs_more_info: number;  // Human labeled "needs_more_info"
+    undecided: number;        // Human labeled "undecided" (can't decide yet)
   };
 
   overall: {
@@ -88,7 +86,7 @@ Computes analytics on-the-fly via SQL aggregation.
     credit_precision: number | null;
     escalate_recall: number | null;
     false_credit_rate: number | null;  // false_credit / (true_credit + false_credit)
-    sample_size: number;               // labeled cases only (excl. excluded)
+    sample_size: number;               // labeled cases only (excl. undecided)
   };
 
   stratified: {
@@ -113,24 +111,6 @@ interface SegmentMetrics {
 ```
 
 Null metrics returned when sample_size is 0. Frontend shows warning icon when sample_size < 10.
-
-#### `PATCH /api/datasets/cases/:id/exclude`
-
-```typescript
-// Request
-{ excluded: boolean, reason?: string }
-
-// Response: updated DatasetCase
-```
-
-#### `POST /api/datasets/:id/derive-all-tags`
-
-Re-derives `auto_tags` for all cases in the dataset from their pipeline runs. Useful for backfilling existing datasets.
-
-```typescript
-// Response
-{ updated: number }
-```
 
 #### Modified: `GET /api/datasets/:id/runs`
 
@@ -193,8 +173,6 @@ function deriveAutoTags(pipelineRun: PipelineRunRow): Record<string, string | bo
 Called automatically:
 1. When a pipeline run completes for a dataset case (in existing POST `/api/datasets` background handler)
 2. When a run's pipeline completes (in existing POST `/api/datasets/:id/runs` background handler)
-3. On-demand via `POST /api/datasets/:id/derive-all-tags` for backfilling
-
 ### Analytics SQL Strategy
 
 All analytics computed on-the-fly. With max 500 cases per dataset, performance is trivial. The query joins `dataset_cases` (or `dataset_run_cases`) with `dispute_pipeline_runs` and aggregates using CASE expressions, grouped by tag dimensions.
@@ -209,7 +187,7 @@ SELECT
   -- ... etc
 FROM dataset_cases dc
 JOIN dispute_pipeline_runs pr ON pr.id = dc.pipeline_run_id
-WHERE dc.dataset_id = $1 AND dc.excluded = false AND dc.label IS NOT NULL AND dc.label != 'needs_more_info'
+WHERE dc.dataset_id = $1 AND dc.label IS NOT NULL AND dc.label != 'undecided'
 GROUP BY dc.auto_tags->>'risk_level'
 ```
 
@@ -219,9 +197,8 @@ For run analytics: same pattern but joining through `dataset_run_cases` instead.
 
 ## Phase 2: Case Quality Control (Future)
 
-- **Exclude toggle** per case (grays out row, removed from metrics)
 - **Manual tags** (user-applied text tags for categorization)
-- **Filter/sort** on Labels tab by tags, risk level, label status, excluded status
+- **Filter/sort** on Labels tab by tags, risk level, label status
 - **Case tag editor** component
 
 ### Schema
@@ -338,10 +315,10 @@ Structured by purpose — safety metrics are non-negotiable, efficiency metrics 
 | File | Change |
 |------|--------|
 | `packages/backend/src/services/db.ts` | Migration for new columns, analytics query functions |
-| `packages/backend/src/routes/dataset.ts` | New analytics endpoint, auto-tag on pipeline completion, exclude endpoint, derive-tags endpoint |
+| `packages/backend/src/routes/dataset.ts` | New analytics endpoint, auto-tag on pipeline completion |
 | `packages/frontend/src/pages/DatasetDetail.tsx` | Add Analytics tab, false_credit_rate in run headers |
 | `packages/frontend/src/types/dataset-builder.ts` | New types (ConfusionMatrix, SegmentMetrics, DatasetAnalytics, extended DatasetCase) |
-| `packages/frontend/src/hooks/useDatasetBuilder.ts` | New hooks (useDatasetAnalytics, useExcludeCase, useDeriveAllTags) |
+| `packages/frontend/src/hooks/useDatasetBuilder.ts` | New hook (useDatasetAnalytics) |
 | `packages/frontend/src/lib/api.ts` | New API client functions |
 | **New:** `packages/backend/src/services/dataset-analytics.ts` | deriveAutoTags + analytics computation |
 | **New:** `packages/frontend/src/components/dataset-builder/AnalyticsTab.tsx` | Analytics container |

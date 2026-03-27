@@ -30,7 +30,7 @@ export interface ConfusionMatrix {
   true_escalate: number;
   false_escalate: number;
   unlabeled: number;
-  needs_more_info: number;
+  undecided: number;
 }
 
 export interface DatasetAnalyticsResult {
@@ -56,7 +56,7 @@ function computeSegmentMetrics(rows: AnalyticsRow[]): SegmentMetrics {
   let sampleSize = 0;
 
   for (const r of rows) {
-    if (!r.label || r.label === 'needs_more_info') continue;
+    if (!r.label || r.label === 'undecided') continue;
     const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
 

@@ -22,7 +22,6 @@ import {
   listDatasetRuns,
   getDatasetRunCases,
   updateDatasetRunCaseLabel,
-  updateDatasetCaseExcluded,
   updateDatasetCaseAutoTags,
   getDatasetAnalytics,
 } from '../services/db.js';
@@ -40,7 +39,7 @@ const CreateDatasetSchema = z.object({
 });
 
 const LabelSchema = z.object({
-  label: z.enum(['credit', 'escalate', 'needs_more_info']),
+  label: z.enum(['credit', 'escalate', 'undecided']),
   notes: z.string().nullable().optional(),
   labeledBy: z.string().nullable().optional(),
 });
@@ -70,7 +69,6 @@ function formatDatasetCase(row: DatasetCaseRow, pipelineRun: PipelineRunRow | nu
     labelNotes: row.label_notes,
     labeledBy: row.labeled_by,
     labeledAt: row.labeled_at,
-    excluded: row.excluded ?? false,
     autoTags: row.auto_tags ?? {},
     createdAt: row.created_at,
   };
@@ -477,63 +475,13 @@ export async function datasetRoutes(app: FastifyInstance) {
     },
   );
 
-  // PATCH /cases/:id/exclude — Toggle excluded flag
-  const ExcludeSchema = z.object({
-    excluded: z.boolean(),
-    reason: z.string().nullable().optional(),
-  });
-
-  app.patch<{ Params: { id: string } }>('/cases/:id/exclude', async (request, reply) => {
-    const id = parseInt(request.params.id, 10);
-    if (isNaN(id)) {
-      return reply.status(400).send({ error: 'Invalid ID' });
-    }
-    try {
-      const body = ExcludeSchema.parse(request.body);
-      const row = await updateDatasetCaseExcluded(id, body.excluded, body.reason ?? null);
-      if (!row) {
-        return reply.status(404).send({ error: 'Dataset case not found' });
-      }
-      return formatDatasetCase(row, null);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
-      }
-      throw error;
-    }
-  });
-
-  // POST /:id/derive-all-tags — Re-derive auto_tags for all cases
-  app.post<{ Params: { id: string } }>('/:id/derive-all-tags', async (request, reply) => {
-    const datasetId = parseInt(request.params.id, 10);
-    if (isNaN(datasetId)) {
-      return reply.status(400).send({ error: 'Invalid dataset ID' });
-    }
-
-    const cases = await listDatasetCases(datasetId);
-    const runIds = cases.map((c) => c.pipeline_run_id).filter((rid): rid is number => rid !== null);
-    const pipelineRuns = await getPipelineRunsByIds(runIds);
-    const runMap = new Map(pipelineRuns.map((r) => [r.id, r]));
-
-    let updated = 0;
-    for (const dc of cases) {
-      if (!dc.pipeline_run_id) continue;
-      const pipelineRun = runMap.get(dc.pipeline_run_id);
-      if (!pipelineRun) continue;
-      const autoTags = deriveAutoTags(pipelineRun);
-      await updateDatasetCaseAutoTags(dc.id, autoTags);
-      updated++;
-    }
-
-    return { updated };
-  });
 }
 
 function computeAgreement(
   label: string | null,
   pipelineRun: PipelineRunRow | null,
 ): boolean | null {
-  if (!label || label === 'needs_more_info' || !pipelineRun) return null;
+  if (!label || label === 'undecided' || !pipelineRun) return null;
   const decision = pipelineRun.planner_output?.decision;
   const hardGate = pipelineRun.hard_gate_triggered;
   if (label === 'credit' && decision === 'credit') return true;

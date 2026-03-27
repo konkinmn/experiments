@@ -135,7 +135,7 @@ async function applyMigrations(): Promise<void> {
           case_id INTEGER NOT NULL,
           dataset_id INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
           pipeline_run_id INTEGER REFERENCES dispute_pipeline_runs(id),
-          label TEXT CHECK (label IN ('credit', 'escalate', 'needs_more_info')),
+          label TEXT CHECK (label IN ('credit', 'escalate', 'undecided')),
           label_notes TEXT,
           labeled_by TEXT,
           labeled_at TIMESTAMPTZ,
@@ -248,23 +248,40 @@ async function applyMigrations(): Promise<void> {
     );
     if (runCaseLabelCol.length === 0) {
       await pool.query(`
-        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS label TEXT CHECK (label IN ('credit', 'escalate', 'needs_more_info'));
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS label TEXT CHECK (label IN ('credit', 'escalate', 'undecided'));
         ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS label_notes TEXT;
         ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS labeled_by TEXT;
         ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS labeled_at TIMESTAMPTZ;
       `);
     }
 
-    // Migration 010: add excluded, exclude_reason, auto_tags to dataset_cases
-    const { rows: excludedCol } = await pool.query(
+    // Migration 010: add auto_tags to dataset_cases
+    const { rows: autoTagsCol } = await pool.query(
       `SELECT 1 FROM information_schema.columns
-       WHERE table_name = 'dataset_cases' AND column_name = 'excluded'`,
+       WHERE table_name = 'dataset_cases' AND column_name = 'auto_tags'`,
     );
-    if (excludedCol.length === 0) {
+    if (autoTagsCol.length === 0) {
       await pool.query(`
-        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS excluded BOOLEAN NOT NULL DEFAULT false;
-        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS exclude_reason TEXT;
         ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS auto_tags JSONB DEFAULT '{}';
+      `);
+    }
+
+    // Migration 011: rename needs_more_info → undecided, drop excluded/exclude_reason
+    const { rows: oldLabelCheck } = await pool.query(
+      `SELECT 1 FROM pg_constraint
+       WHERE conname = 'dataset_cases_label_check'
+         AND pg_get_constraintdef(oid) LIKE '%needs_more_info%'`,
+    );
+    if (oldLabelCheck.length > 0) {
+      await pool.query(`
+        UPDATE dataset_cases SET label = 'undecided' WHERE label = 'needs_more_info';
+        UPDATE dataset_run_cases SET label = 'undecided' WHERE label = 'needs_more_info';
+        ALTER TABLE dataset_cases DROP CONSTRAINT IF EXISTS dataset_cases_label_check;
+        ALTER TABLE dataset_cases ADD CONSTRAINT dataset_cases_label_check CHECK (label IN ('credit', 'escalate', 'undecided'));
+        ALTER TABLE dataset_run_cases DROP CONSTRAINT IF EXISTS dataset_run_cases_label_check;
+        ALTER TABLE dataset_run_cases ADD CONSTRAINT dataset_run_cases_label_check CHECK (label IN ('credit', 'escalate', 'undecided'));
+        ALTER TABLE dataset_cases DROP COLUMN IF EXISTS excluded;
+        ALTER TABLE dataset_cases DROP COLUMN IF EXISTS exclude_reason;
       `);
     }
 
@@ -911,20 +928,6 @@ export async function getDatasetRunCases(runId: number): Promise<
   }));
 }
 
-export async function updateDatasetCaseExcluded(
-  id: number,
-  excluded: boolean,
-  reason: string | null,
-): Promise<DatasetCaseRow | null> {
-  await ensureMigrations();
-  const pool = getPool();
-  const { rows } = await pool.query<DatasetCaseRow>(
-    `UPDATE dataset_cases SET excluded = $1, exclude_reason = $2 WHERE id = $3 RETURNING *`,
-    [excluded, reason, id],
-  );
-  return rows[0] ?? null;
-}
-
 export async function updateDatasetCaseAutoTags(
   id: number,
   autoTags: Record<string, string | boolean>,
@@ -941,7 +944,7 @@ export async function getDatasetAnalytics(
   datasetId: number,
   runId?: number,
 ): Promise<{
-  confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; needs_more_info: number };
+  confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; undecided: number };
   rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null }>;
 }> {
   await ensureMigrations();
@@ -959,7 +962,7 @@ export async function getDatasetAnalytics(
        FROM dataset_run_cases rc
        JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
        LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
-       WHERE rc.run_id = $1 AND dc.excluded = false`,
+       WHERE rc.run_id = $1`,
       [runId],
     );
 
@@ -975,7 +978,7 @@ export async function getDatasetAnalytics(
       `SELECT dc.auto_tags, dc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered
        FROM dataset_cases dc
        LEFT JOIN dispute_pipeline_runs pr ON pr.id = dc.pipeline_run_id
-       WHERE dc.dataset_id = $1 AND dc.excluded = false`,
+       WHERE dc.dataset_id = $1`,
       [datasetId],
     );
 
@@ -986,11 +989,11 @@ export async function getDatasetAnalytics(
 function computeAnalyticsFromRows(
   rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null }>
 ) {
-  let true_credit = 0, false_credit = 0, true_escalate = 0, false_escalate = 0, unlabeled = 0, needs_more_info = 0;
+  let true_credit = 0, false_credit = 0, true_escalate = 0, false_escalate = 0, unlabeled = 0, undecided = 0;
 
   for (const r of rows) {
     if (!r.label) { unlabeled++; continue; }
-    if (r.label === 'needs_more_info') { needs_more_info++; continue; }
+    if (r.label === 'undecided') { undecided++; continue; }
 
     const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
@@ -1003,7 +1006,7 @@ function computeAnalyticsFromRows(
   }
 
   return {
-    confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, needs_more_info },
+    confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, undecided },
     rows,
   };
 }

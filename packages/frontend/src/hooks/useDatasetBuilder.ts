@@ -146,26 +146,3 @@ export function useDatasetAnalytics(datasetId: number, runId?: number, options?:
   });
 }
 
-export function useExcludeCase() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, excluded, reason }: { id: number; excluded: boolean; reason?: string }) =>
-      api.excludeDatasetCase(id, excluded, reason),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dataset'] });
-      queryClient.invalidateQueries({ queryKey: ['datasets'] });
-      queryClient.invalidateQueries({ queryKey: ['dataset-analytics'] });
-    },
-  });
-}
-
-export function useDeriveAllTags() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (datasetId: number) => api.deriveAllTags(datasetId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dataset'] });
-      queryClient.invalidateQueries({ queryKey: ['dataset-analytics'] });
-    },
-  });
-}

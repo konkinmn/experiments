@@ -57,17 +57,17 @@ export function DatasetDetail() {
   const [showNewRunModal, setShowNewRunModal] = useState(false);
 
   const summary = useMemo(() => {
-    if (!dataset?.cases) return { total: 0, labeled: 0, credit: 0, escalate: 0, needsMoreInfo: 0 };
-    let labeled = 0, credit = 0, escalate = 0, needsMoreInfo = 0;
+    if (!dataset?.cases) return { total: 0, labeled: 0, credit: 0, escalate: 0, undecided: 0 };
+    let labeled = 0, credit = 0, escalate = 0, undecided = 0;
     for (const c of dataset.cases) {
       if (c.label) {
         labeled++;
         if (c.label === 'credit') credit++;
         else if (c.label === 'escalate') escalate++;
-        else if (c.label === 'needs_more_info') needsMoreInfo++;
+        else if (c.label === 'undecided') undecided++;
       }
     }
-    return { total: dataset.cases.length, labeled, credit, escalate, needsMoreInfo };
+    return { total: dataset.cases.length, labeled, credit, escalate, undecided };
   }, [dataset?.cases]);
 
   const handleLabel = (datasetCaseId: number, label: DatasetLabel, notes?: string) => {
@@ -246,7 +246,7 @@ function LabelsTab({
   onDeleteCase,
 }: {
   dataset: { cases: DatasetCase[] };
-  summary: { total: number; labeled: number; credit: number; escalate: number; needsMoreInfo: number };
+  summary: { total: number; labeled: number; credit: number; escalate: number; undecided: number };
   onLabel: (datasetCaseId: number, label: DatasetLabel, notes?: string) => void;
   onDeleteCase: (datasetCaseId: number) => void;
 }) {
@@ -273,8 +273,8 @@ function LabelsTab({
                 <p className="text-xs text-muted-foreground">Escalate</p>
               </div>
               <div>
-                <p className="text-2xl font-bold text-blue-600">{summary.needsMoreInfo}</p>
-                <p className="text-xs text-muted-foreground">Needs More Info</p>
+                <p className="text-2xl font-bold text-blue-600">{summary.undecided}</p>
+                <p className="text-xs text-muted-foreground">Can't decide yet</p>
               </div>
             </div>
           </CardContent>
@@ -317,6 +317,7 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
       labelNotes: rc.labelNotes,
       labeledBy: rc.labeledBy,
       labeledAt: rc.labeledAt,
+      autoTags: {},
       createdAt: '',
     }));
   }, [runCases, datasetId]);
@@ -331,17 +332,17 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
   }, [runCases]);
 
   const runSummary = useMemo(() => {
-    if (!runCases) return { total: 0, labeled: 0, credit: 0, escalate: 0, needsMoreInfo: 0 };
-    let labeled = 0, credit = 0, escalate = 0, needsMoreInfo = 0;
+    if (!runCases) return { total: 0, labeled: 0, credit: 0, escalate: 0, undecided: 0 };
+    let labeled = 0, credit = 0, escalate = 0, undecided = 0;
     for (const rc of runCases) {
       if (rc.label) {
         labeled++;
         if (rc.label === 'credit') credit++;
         else if (rc.label === 'escalate') escalate++;
-        else if (rc.label === 'needs_more_info') needsMoreInfo++;
+        else if (rc.label === 'undecided') undecided++;
       }
     }
-    return { total: runCases.length, labeled, credit, escalate, needsMoreInfo };
+    return { total: runCases.length, labeled, credit, escalate, undecided };
   }, [runCases]);
 
   return (
@@ -428,8 +429,8 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
                 <p className="text-xs text-muted-foreground">Escalate</p>
               </div>
               <div>
-                <p className="text-2xl font-bold text-blue-600">{runSummary.needsMoreInfo}</p>
-                <p className="text-xs text-muted-foreground">Needs More Info</p>
+                <p className="text-2xl font-bold text-blue-600">{runSummary.undecided}</p>
+                <p className="text-xs text-muted-foreground">Can't decide yet</p>
               </div>
             </div>
           </CardContent>

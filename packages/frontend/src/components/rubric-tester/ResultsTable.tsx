@@ -33,7 +33,7 @@ const DECISION_BADGE: Record<string, { label: string; variant: 'green' | 'amber'
 const LABEL_BADGE: Record<DatasetLabel, { label: string; variant: 'green' | 'amber' | 'blue' }> = {
   credit: { label: 'Credit', variant: 'green' },
   escalate: { label: 'Escalate', variant: 'amber' },
-  needs_more_info: { label: 'Needs More Info', variant: 'blue' },
+  undecided: { label: "Can't decide yet", variant: 'blue' },
 };
 
 const HARD_GATE_LABELS: Record<string, string> = {
@@ -753,12 +753,12 @@ function ExpandedDetail({
             </Button>
             <Button
               size="sm"
-              variant={datasetLabel === 'needs_more_info' ? 'default' : 'outline'}
-              className={datasetLabel === 'needs_more_info' ? 'bg-blue-600 hover:bg-blue-700' : ''}
-              onClick={() => onDatasetLabel(datasetCaseId, 'needs_more_info', reviewNotes || undefined)}
+              variant={datasetLabel === 'undecided' ? 'default' : 'outline'}
+              className={datasetLabel === 'undecided' ? 'bg-blue-600 hover:bg-blue-700' : ''}
+              onClick={() => onDatasetLabel(datasetCaseId, 'undecided', reviewNotes || undefined)}
             >
               <MessageSquare className="h-4 w-4 mr-1" />
-              Needs more info
+              Can't decide yet
             </Button>
             <Input
               className="flex-1 max-w-sm"

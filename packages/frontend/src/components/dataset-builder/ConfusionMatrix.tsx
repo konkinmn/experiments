@@ -44,10 +44,10 @@ export function ConfusionMatrix({ matrix }: Props) {
         </div>
 
         {/* Other counts */}
-        {(matrix.unlabeled > 0 || matrix.needs_more_info > 0) && (
+        {(matrix.unlabeled > 0 || matrix.undecided > 0) && (
           <div className="mt-3 flex gap-4 text-xs text-gray-500">
             {matrix.unlabeled > 0 && <span>Unlabeled: {matrix.unlabeled}</span>}
-            {matrix.needs_more_info > 0 && <span>Needs more info: {matrix.needs_more_info}</span>}
+            {matrix.undecided > 0 && <span>Can't decide yet: {matrix.undecided}</span>}
           </div>
         )}
       </CardContent>

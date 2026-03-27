@@ -220,7 +220,7 @@ export interface DatasetRunCase {
 
 // --- Dataset Builder types ---
 
-export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
+export type DatasetLabel = 'credit' | 'escalate' | 'undecided';
 export type DatasetSourceType = 'case_ids' | 'custom_sql';
 
 export interface DatasetRow {
@@ -247,8 +247,6 @@ export interface DatasetCaseRow {
   label_notes: string | null;
   labeled_by: string | null;
   labeled_at: string | null;
-  excluded: boolean;
-  exclude_reason: string | null;
   auto_tags: Record<string, string | boolean>;
   created_at: string;
 }

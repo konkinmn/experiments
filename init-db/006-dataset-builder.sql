@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS dataset_cases (
   case_id INTEGER NOT NULL,
   segment TEXT NOT NULL,
   pipeline_run_id INTEGER REFERENCES dispute_pipeline_runs(id),
-  label TEXT CHECK (label IN ('credit', 'escalate', 'needs_more_info')),
+  label TEXT CHECK (label IN ('credit', 'escalate', 'undecided')),
   label_notes TEXT,
   labeled_by TEXT,
   labeled_at TIMESTAMPTZ,
