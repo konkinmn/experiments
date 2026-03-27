@@ -29,6 +29,8 @@ export interface DatasetCase {
   labelNotes: string | null;
   labeledBy: string | null;
   labeledAt: string | null;
+  excluded: boolean;
+  autoTags: Record<string, string | boolean>;
   createdAt: string;
 }
 
@@ -60,6 +62,7 @@ export interface DatasetRun {
   agreement_rate: number | null;
   credit_precision: number | null;
   escalate_recall: number | null;
+  false_credit_rate: number | null;
 }
 
 export interface DatasetRunCase {
@@ -81,4 +84,34 @@ export interface RunOptions {
   models: string[];
   prompts: string[];
   default_rubric: RubricWeights;
+}
+
+// --- Analytics types ---
+
+export interface SegmentMetrics {
+  sample_size: number;
+  agreement_rate: number | null;
+  credit_precision: number | null;
+  escalate_recall: number | null;
+  false_credit_rate: number | null;
+}
+
+export interface ConfusionMatrix {
+  true_credit: number;
+  false_credit: number;
+  true_escalate: number;
+  false_escalate: number;
+  unlabeled: number;
+  needs_more_info: number;
+}
+
+export interface DatasetAnalytics {
+  confusion_matrix: ConfusionMatrix;
+  overall: SegmentMetrics;
+  stratified: {
+    by_risk_level: Record<string, SegmentMetrics>;
+    by_dispute_type: Record<string, SegmentMetrics>;
+    by_hard_gate: Record<string, SegmentMetrics>;
+    by_rubric_bucket: Record<string, SegmentMetrics>;
+  };
 }

@@ -137,3 +137,35 @@ export function useDatasetRunCases(runId: number, options?: { enabled?: boolean;
     refetchInterval: options?.polling ? 3000 : false,
   });
 }
+
+export function useDatasetAnalytics(datasetId: number, runId?: number, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['dataset-analytics', datasetId, runId],
+    queryFn: () => api.getDatasetAnalytics(datasetId, runId),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useExcludeCase() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, excluded, reason }: { id: number; excluded: boolean; reason?: string }) =>
+      api.excludeDatasetCase(id, excluded, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-analytics'] });
+    },
+  });
+}
+
+export function useDeriveAllTags() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (datasetId: number) => api.deriveAllTags(datasetId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-analytics'] });
+    },
+  });
+}

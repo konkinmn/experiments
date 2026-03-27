@@ -15,6 +15,7 @@ import type {
   DatasetRunCase,
   RunOptions,
   RubricWeights,
+  DatasetAnalytics,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -140,4 +141,21 @@ export const api = {
 
   getDatasetRunCases: (runId: number) =>
     fetchApi<{ data: DatasetRunCase[] }>(`/api/datasets/runs/${runId}/cases`),
+
+  // Dataset Analytics API
+  getDatasetAnalytics: (datasetId: number, runId?: number) => {
+    const params = runId ? `?runId=${runId}` : '';
+    return fetchApi<DatasetAnalytics>(`/api/datasets/${datasetId}/analytics${params}`);
+  },
+
+  excludeDatasetCase: (id: number, excluded: boolean, reason?: string) =>
+    fetchApi<DatasetCase>(`/api/datasets/cases/${id}/exclude`, {
+      method: 'PATCH',
+      body: JSON.stringify({ excluded, reason: reason ?? null }),
+    }),
+
+  deriveAllTags: (datasetId: number) =>
+    fetchApi<{ updated: number }>(`/api/datasets/${datasetId}/derive-all-tags`, {
+      method: 'POST',
+    }),
 };

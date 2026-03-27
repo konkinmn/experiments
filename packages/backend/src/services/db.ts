@@ -255,6 +255,19 @@ async function applyMigrations(): Promise<void> {
       `);
     }
 
+    // Migration 010: add excluded, exclude_reason, auto_tags to dataset_cases
+    const { rows: excludedCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_cases' AND column_name = 'excluded'`,
+    );
+    if (excludedCol.length === 0) {
+      await pool.query(`
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS excluded BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS exclude_reason TEXT;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS auto_tags JSONB DEFAULT '{}';
+      `);
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -700,6 +713,7 @@ export async function insertDatasetRun(
     agreement_rate: null,
     credit_precision: null,
     escalate_recall: null,
+    false_credit_rate: null,
   };
 }
 
@@ -783,6 +797,7 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
       agreement_rate: string | null;
       credit_precision: string | null;
       escalate_recall: string | null;
+      false_credit_rate: string | null;
     }
   >(
     `SELECT r.*,
@@ -803,7 +818,11 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
             ROUND(
               100.0 * SUM(CASE WHEN rc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
               / NULLIF(SUM(CASE WHEN rc.label = 'escalate' AND pr.id IS NOT NULL THEN 1 ELSE 0 END), 0),
-            1)::text AS escalate_recall
+            1)::text AS escalate_recall,
+            ROUND(
+              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label = 'escalate' THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
+            1)::text AS false_credit_rate
      FROM dataset_runs r
      LEFT JOIN dataset_run_cases rc ON rc.run_id = r.id
      LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
@@ -825,6 +844,7 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
     agreement_rate: r.agreement_rate !== null ? parseFloat(r.agreement_rate) : null,
     credit_precision: r.credit_precision !== null ? parseFloat(r.credit_precision) : null,
     escalate_recall: r.escalate_recall !== null ? parseFloat(r.escalate_recall) : null,
+    false_credit_rate: r.false_credit_rate !== null ? parseFloat(r.false_credit_rate) : null,
   }));
 }
 
@@ -889,6 +909,103 @@ export async function getDatasetRunCases(runId: number): Promise<
     labeled_at: r.labeled_at,
     pipeline_run: r.pipeline_run_id ? (runMap.get(r.pipeline_run_id) ?? null) : null,
   }));
+}
+
+export async function updateDatasetCaseExcluded(
+  id: number,
+  excluded: boolean,
+  reason: string | null,
+): Promise<DatasetCaseRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetCaseRow>(
+    `UPDATE dataset_cases SET excluded = $1, exclude_reason = $2 WHERE id = $3 RETURNING *`,
+    [excluded, reason, id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function updateDatasetCaseAutoTags(
+  id: number,
+  autoTags: Record<string, string | boolean>,
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE dataset_cases SET auto_tags = $1 WHERE id = $2`,
+    [JSON.stringify(autoTags), id],
+  );
+}
+
+export async function getDatasetAnalytics(
+  datasetId: number,
+  runId?: number,
+): Promise<{
+  confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; needs_more_info: number };
+  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null }>;
+}> {
+  await ensureMigrations();
+  const pool = getPool();
+
+  if (runId) {
+    // Analytics for a specific run
+    const { rows } = await pool.query<{
+      auto_tags: Record<string, string | boolean>;
+      label: string | null;
+      pipeline_decision: string | null;
+      hard_gate_triggered: string | null;
+    }>(
+      `SELECT dc.auto_tags, rc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered
+       FROM dataset_run_cases rc
+       JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
+       LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
+       WHERE rc.run_id = $1 AND dc.excluded = false`,
+      [runId],
+    );
+
+    return computeAnalyticsFromRows(rows);
+  } else {
+    // Analytics for baseline (Labels tab)
+    const { rows } = await pool.query<{
+      auto_tags: Record<string, string | boolean>;
+      label: string | null;
+      pipeline_decision: string | null;
+      hard_gate_triggered: string | null;
+    }>(
+      `SELECT dc.auto_tags, dc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered
+       FROM dataset_cases dc
+       LEFT JOIN dispute_pipeline_runs pr ON pr.id = dc.pipeline_run_id
+       WHERE dc.dataset_id = $1 AND dc.excluded = false`,
+      [datasetId],
+    );
+
+    return computeAnalyticsFromRows(rows);
+  }
+}
+
+function computeAnalyticsFromRows(
+  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null }>
+) {
+  let true_credit = 0, false_credit = 0, true_escalate = 0, false_escalate = 0, unlabeled = 0, needs_more_info = 0;
+
+  for (const r of rows) {
+    if (!r.label) { unlabeled++; continue; }
+    if (r.label === 'needs_more_info') { needs_more_info++; continue; }
+
+    const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
+    const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
+
+    if (r.label === 'credit' && pipelineCredited) true_credit++;
+    else if (r.label === 'escalate' && pipelineCredited) false_credit++;
+    else if (r.label === 'escalate' && pipelineEscalated) true_escalate++;
+    else if (r.label === 'credit' && pipelineEscalated) false_escalate++;
+    else unlabeled++; // pipeline has no decision yet
+  }
+
+  return {
+    confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, needs_more_info },
+    rows,
+  };
 }
 
 export async function closePool(): Promise<void> {

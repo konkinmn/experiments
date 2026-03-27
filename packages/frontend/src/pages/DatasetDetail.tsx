@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResultsTable } from '@/components/rubric-tester';
-import { NewRunModal } from '@/components/dataset-builder';
+import { NewRunModal, AnalyticsTab } from '@/components/dataset-builder';
 import {
   useDataset,
   useLabelDatasetCase,
@@ -40,7 +40,7 @@ const EXPORT_COLUMNS: ColumnDef<ExportRow>[] = [
   { header: 'Duration (ms)', accessor: (r) => r.pipelineRun?.pipelineDurationMs ?? '' },
 ];
 
-type ActiveTab = 'labels' | `run-${number}`;
+type ActiveTab = 'labels' | 'analytics' | `run-${number}`;
 
 export function DatasetDetail() {
   const { id } = useParams<{ id: string }>();
@@ -172,6 +172,16 @@ export function DatasetDetail() {
         >
           Labels
         </button>
+        <button
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'analytics'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+          onClick={() => setActiveTab('analytics')}
+        >
+          Analytics
+        </button>
         {runs?.map((run) => (
           <button
             key={run.id}
@@ -207,6 +217,11 @@ export function DatasetDetail() {
           summary={summary}
           onLabel={handleLabel}
           onDeleteCase={handleDeleteCase}
+        />
+      ) : activeTab === 'analytics' ? (
+        <AnalyticsTab
+          datasetId={datasetId}
+          runs={runs}
         />
       ) : activeRun ? (
         <RunTab
@@ -356,7 +371,7 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
               </p>
             </div>
           )}
-          <div className="grid grid-cols-4 gap-4 text-center">
+          <div className="grid grid-cols-5 gap-4 text-center">
             <div>
               <p className="text-2xl font-bold">
                 {run.agreement_rate != null ? `${run.agreement_rate}%` : '—'}
@@ -374,6 +389,12 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
                 {run.escalate_recall != null ? `${run.escalate_recall}%` : '—'}
               </p>
               <p className="text-xs text-muted-foreground">Escalate Recall</p>
+            </div>
+            <div>
+              <p className={`text-2xl font-bold ${run.false_credit_rate != null && run.false_credit_rate > 0 ? 'text-red-600' : ''}`}>
+                {run.false_credit_rate != null ? `${run.false_credit_rate}%` : '—'}
+              </p>
+              <p className="text-xs text-muted-foreground">False Credit Rate</p>
             </div>
             <div>
               <p className="text-2xl font-bold">

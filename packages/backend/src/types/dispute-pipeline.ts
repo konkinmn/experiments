@@ -206,6 +206,7 @@ export interface DatasetRun {
   agreement_rate: number | null;
   credit_precision: number | null;
   escalate_recall: number | null;
+  false_credit_rate: number | null;
 }
 
 export interface DatasetRunCase {
@@ -246,6 +247,9 @@ export interface DatasetCaseRow {
   label_notes: string | null;
   labeled_by: string | null;
   labeled_at: string | null;
+  excluded: boolean;
+  exclude_reason: string | null;
+  auto_tags: Record<string, string | boolean>;
   created_at: string;
 }
 
