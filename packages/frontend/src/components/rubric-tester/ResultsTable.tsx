@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Trash2, Check, X, AlertTriangle, MessageSqua
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import type { PipelineResult, RiskLevel, CaseSignalsRaw, DatasetCase, DatasetLabel } from '@/types';
 
 const WS_CASE_URL = (alias: string, caseId: number) =>
@@ -14,8 +15,10 @@ interface ResultsTableProps {
   onReview?: (id: number, verdict: 'correct' | 'incorrect', notes?: string) => void;
   verdictOptions?: 'eval' | 'dataset';
   datasetCases?: DatasetCase[];
-  onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string) => void;
+  onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => void;
   onDeleteCase?: (datasetCaseId: number) => void;
+  onTagCase?: (datasetCaseId: number, tags: string[]) => void;
+  onDatasetLabel2?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
   agreementMap?: Record<number, boolean | null>;
 }
 
@@ -133,7 +136,7 @@ function formatSignalValue(value: unknown): string {
   return String(value);
 }
 
-export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, agreementMap }: ResultsTableProps) {
+export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, onTagCase, onDatasetLabel2, agreementMap }: ResultsTableProps) {
   if (verdictOptions === 'dataset') {
     const cases = datasetCases ?? [];
     if (cases.length === 0) {
@@ -272,7 +275,16 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
                   datasetCaseId={dc.id}
                   datasetLabel={dc.label}
                   datasetLabelNotes={dc.labelNotes}
+                  datasetLabelConfidence={dc.labelConfidence}
+                  datasetDisagreementReason={dc.disagreementReason}
+                  datasetDisagreementNotes={dc.disagreementNotes}
+                  datasetManualTags={dc.manualTags}
+                  datasetLabel2={dc.label2}
+                  datasetLabel2Notes={dc.label2Notes}
+                  datasetLabel2Confidence={dc.label2Confidence}
                   onDatasetLabel={onDatasetLabel}
+                  onDatasetLabel2={onDatasetLabel2}
+                  onTagCase={onTagCase}
                 />
               </div>
             </div>
@@ -361,7 +373,16 @@ function ExpandedDetail({
   datasetCaseId,
   datasetLabel,
   datasetLabelNotes,
+  datasetLabelConfidence,
+  datasetDisagreementReason,
+  datasetDisagreementNotes,
+  datasetManualTags,
+  datasetLabel2,
+  datasetLabel2Notes,
+  datasetLabel2Confidence,
   onDatasetLabel,
+  onDatasetLabel2,
+  onTagCase,
 }: {
   result: PipelineResult;
   onReview?: (id: number, verdict: 'correct' | 'incorrect', notes?: string) => void;
@@ -369,7 +390,16 @@ function ExpandedDetail({
   datasetCaseId?: number;
   datasetLabel?: DatasetLabel | null;
   datasetLabelNotes?: string | null;
-  onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string) => void;
+  datasetLabelConfidence?: string | null;
+  datasetDisagreementReason?: string | null;
+  datasetDisagreementNotes?: string | null;
+  datasetManualTags?: string[];
+  datasetLabel2?: DatasetLabel | null;
+  datasetLabel2Notes?: string | null;
+  datasetLabel2Confidence?: string | null;
+  onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => void;
+  onDatasetLabel2?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
+  onTagCase?: (datasetCaseId: number, tags: string[]) => void;
 }) {
   const [reviewNotes, setReviewNotes] = useState(
     verdictOptions === 'dataset' ? (datasetLabelNotes ?? '') : (result.reviewerNotes ?? ''),
@@ -377,6 +407,23 @@ function ExpandedDetail({
   useEffect(() => {
     setReviewNotes(verdictOptions === 'dataset' ? (datasetLabelNotes ?? '') : (result.reviewerNotes ?? ''));
   }, [verdictOptions, datasetLabelNotes, result.reviewerNotes]);
+  const [confidence, setConfidence] = useState<string | null>(datasetLabelConfidence ?? null);
+  const [disagreementReason, setDisagreementReason] = useState<string | null>(datasetDisagreementReason ?? null);
+  const [disNotes, setDisNotes] = useState(datasetDisagreementNotes ?? '');
+  useEffect(() => {
+    setConfidence(datasetLabelConfidence ?? null);
+    setDisagreementReason(datasetDisagreementReason ?? null);
+    setDisNotes(datasetDisagreementNotes ?? '');
+  }, [datasetLabelConfidence, datasetDisagreementReason, datasetDisagreementNotes]);
+  const [showLabel2, setShowLabel2] = useState(!!datasetLabel2);
+  const [label2Notes, setLabel2Notes] = useState(datasetLabel2Notes ?? '');
+  const [label2Confidence, setLabel2Confidence] = useState<string | null>(datasetLabel2Confidence ?? null);
+  useEffect(() => {
+    setShowLabel2(!!datasetLabel2);
+    setLabel2Notes(datasetLabel2Notes ?? '');
+    setLabel2Confidence(datasetLabel2Confidence ?? null);
+  }, [datasetLabel2, datasetLabel2Notes, datasetLabel2Confidence]);
+  const [tagInput, setTagInput] = useState('');
   const [showRawData, setShowRawData] = useState(false);
   const [showEnrichment, setShowEnrichment] = useState(false);
   const [showDialogue, setShowDialogue] = useState(false);
@@ -729,15 +776,29 @@ function ExpandedDetail({
       )}
 
       {/* Reviewer Controls — dataset mode */}
-      {verdictOptions === 'dataset' && onDatasetLabel && datasetCaseId != null && (
-        <div className="border-t pt-3">
+      {verdictOptions === 'dataset' && onDatasetLabel && datasetCaseId != null && (() => {
+        const pipelineDecision = result.hardGateTriggered ? 'escalate' : result.plannerOutput?.decision === 'credit' ? 'credit' : 'escalate';
+
+        const handleLabel = (label: DatasetLabel) => {
+          const isDisagreement = label !== 'undecided' && label !== pipelineDecision;
+          onDatasetLabel(
+            datasetCaseId, label, reviewNotes || undefined,
+            confidence, isDisagreement ? disagreementReason : null,
+            isDisagreement ? (disNotes || null) : null,
+          );
+        };
+
+        const currentDisagreement = datasetLabel && datasetLabel !== 'undecided' && datasetLabel !== pipelineDecision;
+
+        return (
+        <div className="border-t pt-3 space-y-3">
           <h4 className="text-xs font-medium text-muted-foreground mb-2">Reviewer Verdict</h4>
           <div className="flex items-center gap-3">
             <Button
               size="sm"
               variant={datasetLabel === 'credit' ? 'default' : 'outline'}
               className={datasetLabel === 'credit' ? 'bg-green-600 hover:bg-green-700' : ''}
-              onClick={() => onDatasetLabel(datasetCaseId, 'credit', reviewNotes || undefined)}
+              onClick={() => handleLabel('credit')}
             >
               <Check className="h-4 w-4 mr-1" />
               Credit
@@ -746,7 +807,7 @@ function ExpandedDetail({
               size="sm"
               variant={datasetLabel === 'escalate' ? 'default' : 'outline'}
               className={datasetLabel === 'escalate' ? 'bg-amber-600 hover:bg-amber-700' : ''}
-              onClick={() => onDatasetLabel(datasetCaseId, 'escalate', reviewNotes || undefined)}
+              onClick={() => handleLabel('escalate')}
             >
               <AlertTriangle className="h-4 w-4 mr-1" />
               Escalate
@@ -755,7 +816,7 @@ function ExpandedDetail({
               size="sm"
               variant={datasetLabel === 'undecided' ? 'default' : 'outline'}
               className={datasetLabel === 'undecided' ? 'bg-blue-600 hover:bg-blue-700' : ''}
-              onClick={() => onDatasetLabel(datasetCaseId, 'undecided', reviewNotes || undefined)}
+              onClick={() => handleLabel('undecided')}
             >
               <MessageSquare className="h-4 w-4 mr-1" />
               Can't decide yet
@@ -767,6 +828,181 @@ function ExpandedDetail({
               onChange={(e) => setReviewNotes(e.target.value)}
             />
           </div>
+
+          {/* Confidence + Disagreement row */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-muted-foreground">Confidence</label>
+              <Select
+                className="h-8 text-xs w-[110px]"
+                value={confidence ?? ''}
+                onChange={(e) => {
+                  const val = e.target.value || null;
+                  setConfidence(val);
+                  if (datasetLabel && datasetCaseId != null) {
+                    const isDisagreement = datasetLabel !== 'undecided' && datasetLabel !== pipelineDecision;
+                    onDatasetLabel(datasetCaseId, datasetLabel, reviewNotes || undefined, val, isDisagreement ? disagreementReason : null, isDisagreement ? (disNotes || null) : null);
+                  }
+                }}
+              >
+                <option value="">—</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </Select>
+            </div>
+
+            {currentDisagreement && (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs text-red-600 font-medium">Disagrees with pipeline</label>
+                  <Select
+                    className="h-8 text-xs w-[160px]"
+                    value={disagreementReason ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value || null;
+                      setDisagreementReason(val);
+                      if (datasetLabel && datasetCaseId != null) {
+                        onDatasetLabel(datasetCaseId, datasetLabel, reviewNotes || undefined, confidence, val, disNotes || null);
+                      }
+                    }}
+                  >
+                    <option value="">Select reason...</option>
+                    <option value="signal_quality">Bad signals</option>
+                    <option value="rubric_issue">Rubric issue</option>
+                    <option value="llm_reasoning">LLM reasoning</option>
+                    <option value="human_label_wrong">My label may be wrong</option>
+                    <option value="edge_case">Edge case</option>
+                    <option value="other">Other</option>
+                  </Select>
+                </div>
+                <Input
+                  className="h-8 text-xs flex-1 max-w-xs"
+                  placeholder="Disagreement notes (optional)"
+                  value={disNotes}
+                  onChange={(e) => setDisNotes(e.target.value)}
+                  onBlur={() => {
+                    if (datasetLabel && datasetCaseId != null) {
+                      onDatasetLabel(datasetCaseId, datasetLabel, reviewNotes || undefined, confidence, disagreementReason, disNotes || null);
+                    }
+                  }}
+                />
+              </>
+            )}
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* Manual Tags — dataset mode */}
+      {verdictOptions === 'dataset' && onTagCase && datasetCaseId != null && (
+        <div className="border-t pt-3">
+          <h4 className="text-xs font-medium text-muted-foreground mb-2">Tags</h4>
+          <div className="flex items-center gap-2 flex-wrap">
+            {(datasetManualTags ?? []).map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded-full"
+              >
+                {tag}
+                <button
+                  className="text-gray-400 hover:text-gray-600"
+                  onClick={() => onTagCase(datasetCaseId, (datasetManualTags ?? []).filter((t) => t !== tag))}
+                >
+                  &times;
+                </button>
+              </span>
+            ))}
+            <Input
+              className="h-7 text-xs w-32"
+              placeholder="Add tag..."
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && tagInput.trim()) {
+                  const newTags = [...(datasetManualTags ?? []), tagInput.trim()];
+                  onTagCase(datasetCaseId, [...new Set(newTags)]);
+                  setTagInput('');
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Second Labeler — dataset mode */}
+      {verdictOptions === 'dataset' && onDatasetLabel2 && datasetCaseId != null && (
+        <div className="border-t pt-3">
+          <button
+            className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-gray-700 mb-2"
+            onClick={() => setShowLabel2(!showLabel2)}
+          >
+            {showLabel2 ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Second Labeler
+            {datasetLabel2 && (
+              <Badge variant={datasetLabel2 === 'credit' ? 'green' : datasetLabel2 === 'escalate' ? 'amber' : 'blue'} className="ml-1">
+                {datasetLabel2}
+              </Badge>
+            )}
+          </button>
+          {showLabel2 && (
+            <div className="ml-4 space-y-2">
+              <div className="flex items-center gap-3">
+                <Button
+                  size="sm"
+                  variant={datasetLabel2 === 'credit' ? 'default' : 'outline'}
+                  className={datasetLabel2 === 'credit' ? 'bg-green-600 hover:bg-green-700' : ''}
+                  onClick={() => onDatasetLabel2(datasetCaseId, 'credit', label2Notes || undefined, label2Confidence)}
+                >
+                  <Check className="h-4 w-4 mr-1" />
+                  Credit
+                </Button>
+                <Button
+                  size="sm"
+                  variant={datasetLabel2 === 'escalate' ? 'default' : 'outline'}
+                  className={datasetLabel2 === 'escalate' ? 'bg-amber-600 hover:bg-amber-700' : ''}
+                  onClick={() => onDatasetLabel2(datasetCaseId, 'escalate', label2Notes || undefined, label2Confidence)}
+                >
+                  <AlertTriangle className="h-4 w-4 mr-1" />
+                  Escalate
+                </Button>
+                <Button
+                  size="sm"
+                  variant={datasetLabel2 === 'undecided' ? 'default' : 'outline'}
+                  className={datasetLabel2 === 'undecided' ? 'bg-blue-600 hover:bg-blue-700' : ''}
+                  onClick={() => onDatasetLabel2(datasetCaseId, 'undecided', label2Notes || undefined, label2Confidence)}
+                >
+                  <MessageSquare className="h-4 w-4 mr-1" />
+                  Can't decide yet
+                </Button>
+                <Input
+                  className="flex-1 max-w-xs"
+                  placeholder="Notes (optional)"
+                  value={label2Notes}
+                  onChange={(e) => setLabel2Notes(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs text-muted-foreground">Confidence</label>
+                <Select
+                  className="h-8 text-xs w-[110px]"
+                  value={label2Confidence ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value || null;
+                    setLabel2Confidence(val);
+                    if (datasetLabel2 && datasetCaseId != null) {
+                      onDatasetLabel2(datasetCaseId, datasetLabel2, label2Notes || undefined, val);
+                    }
+                  }}
+                >
+                  <option value="">—</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </Select>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS datasets (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
-  source_type TEXT NOT NULL CHECK (source_type IN ('preset', 'case_ids', 'custom_sql')),
+  source_type TEXT NOT NULL CHECK (source_type IN ('case_ids', 'custom_sql', 'composition')),
   source_config JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

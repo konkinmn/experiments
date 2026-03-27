@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { ConfusionMatrix } from './ConfusionMatrix';
 import { StratifiedMetrics } from './StratifiedMetrics';
+import { DisagreementBreakdown } from './DisagreementBreakdown';
 import { useDatasetAnalytics } from '@/hooks/useDatasetBuilder';
 import type { DatasetRun } from '@/types';
 
@@ -90,6 +91,40 @@ export function AnalyticsTab({ datasetId, runs }: Props) {
 
       {/* Stratified breakdown */}
       <StratifiedMetrics stratified={analytics.stratified} />
+
+      {/* Disagreement reasons */}
+      <DisagreementBreakdown breakdown={analytics.disagreement_breakdown} />
+
+      {/* Inter-annotator agreement */}
+      {analytics.inter_annotator && analytics.inter_annotator.dual_labeled_count > 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <h3 className="text-sm font-medium text-gray-700 mb-4">Inter-Annotator Agreement</h3>
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p className="text-2xl font-bold">{analytics.inter_annotator.dual_labeled_count}</p>
+                <p className="text-xs text-muted-foreground">Dual-Labeled Cases</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">
+                  {analytics.inter_annotator.agreement_rate != null ? `${analytics.inter_annotator.agreement_rate}%` : '—'}
+                </p>
+                <p className="text-xs text-muted-foreground">Agreement Rate</p>
+              </div>
+              <div>
+                {analytics.inter_annotator.kappa != null ? (
+                  <p className={`text-2xl font-bold ${analytics.inter_annotator.kappa >= 0.6 ? 'text-green-600' : analytics.inter_annotator.kappa >= 0.4 ? 'text-amber-600' : 'text-red-600'}`}>
+                    {analytics.inter_annotator.kappa.toFixed(2)}
+                  </p>
+                ) : (
+                  <p className="text-2xl font-bold text-gray-400">—</p>
+                )}
+                <p className="text-xs text-muted-foreground">Cohen's Kappa</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

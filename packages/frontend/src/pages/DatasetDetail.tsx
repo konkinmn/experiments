@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResultsTable } from '@/components/rubric-tester';
-import { NewRunModal, AnalyticsTab } from '@/components/dataset-builder';
+import { NewRunModal, AnalyticsTab, CaseFilterBar, CompareTab } from '@/components/dataset-builder';
+import { useCaseFilters } from '@/hooks/useCaseFilters';
 import {
   useDataset,
   useLabelDatasetCase,
@@ -14,6 +15,8 @@ import {
   useDeleteDataset,
   useDatasetRuns,
   useDatasetRunCases,
+  useTagCase,
+  useLabelDatasetCase2,
 } from '@/hooks/useDatasetBuilder';
 import { downloadXlsx, type ColumnDef } from '@/lib/download-xlsx';
 import type { DatasetCase, DatasetLabel, DatasetRun } from '@/types';
@@ -40,7 +43,7 @@ const EXPORT_COLUMNS: ColumnDef<ExportRow>[] = [
   { header: 'Duration (ms)', accessor: (r) => r.pipelineRun?.pipelineDurationMs ?? '' },
 ];
 
-type ActiveTab = 'labels' | 'analytics' | `run-${number}`;
+type ActiveTab = 'labels' | 'analytics' | 'compare' | `run-${number}`;
 
 export function DatasetDetail() {
   const { id } = useParams<{ id: string }>();
@@ -52,6 +55,8 @@ export function DatasetDetail() {
   const labelCase = useLabelDatasetCase();
   const deleteCase = useDeleteDatasetCase();
   const deleteDataset = useDeleteDataset();
+  const tagCase = useTagCase();
+  const labelCase2 = useLabelDatasetCase2();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('labels');
   const [showNewRunModal, setShowNewRunModal] = useState(false);
@@ -70,12 +75,20 @@ export function DatasetDetail() {
     return { total: dataset.cases.length, labeled, credit, escalate, undecided };
   }, [dataset?.cases]);
 
-  const handleLabel = (datasetCaseId: number, label: DatasetLabel, notes?: string) => {
-    labelCase.mutate({ id: datasetCaseId, label, notes: notes ?? null, labeledBy: null });
+  const handleLabel = (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => {
+    labelCase.mutate({ id: datasetCaseId, label, notes: notes ?? null, labeledBy: null, confidence, disagreementReason, disagreementNotes });
   };
 
   const handleDeleteCase = (datasetCaseId: number) => {
     deleteCase.mutate(datasetCaseId);
+  };
+
+  const handleTagCase = (datasetCaseId: number, tags: string[]) => {
+    tagCase.mutate({ id: datasetCaseId, tags });
+  };
+
+  const handleLabel2 = (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => {
+    labelCase2.mutate({ id: datasetCaseId, label, notes: notes ?? null, labeledBy: null, confidence });
   };
 
   const handleDeleteDataset = () => {
@@ -182,6 +195,16 @@ export function DatasetDetail() {
         >
           Analytics
         </button>
+        <button
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'compare'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+          }`}
+          onClick={() => setActiveTab('compare')}
+        >
+          Compare
+        </button>
         {runs?.map((run) => (
           <button
             key={run.id}
@@ -217,11 +240,18 @@ export function DatasetDetail() {
           summary={summary}
           onLabel={handleLabel}
           onDeleteCase={handleDeleteCase}
+          onTagCase={handleTagCase}
+          onLabel2={handleLabel2}
         />
       ) : activeTab === 'analytics' ? (
         <AnalyticsTab
           datasetId={datasetId}
           runs={runs}
+        />
+      ) : activeTab === 'compare' ? (
+        <CompareTab
+          datasetId={datasetId}
+          runs={runs ?? []}
         />
       ) : activeRun ? (
         <RunTab
@@ -244,12 +274,18 @@ function LabelsTab({
   summary,
   onLabel,
   onDeleteCase,
+  onTagCase,
+  onLabel2,
 }: {
   dataset: { cases: DatasetCase[] };
   summary: { total: number; labeled: number; credit: number; escalate: number; undecided: number };
-  onLabel: (datasetCaseId: number, label: DatasetLabel, notes?: string) => void;
+  onLabel: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => void;
   onDeleteCase: (datasetCaseId: number) => void;
+  onTagCase: (datasetCaseId: number, tags: string[]) => void;
+  onLabel2: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
 }) {
+  const filters = useCaseFilters(dataset.cases);
+
   return (
     <div className="space-y-6">
       {dataset.cases.length > 0 && (
@@ -281,12 +317,29 @@ function LabelsTab({
         </Card>
       )}
 
+      {dataset.cases.length > 0 && (
+        <CaseFilterBar
+          labelFilter={filters.labelFilter}
+          onLabelFilterChange={filters.setLabelFilter}
+          riskFilter={filters.riskFilter}
+          onRiskFilterChange={filters.setRiskFilter}
+          hardGateFilter={filters.hardGateFilter}
+          onHardGateFilterChange={filters.setHardGateFilter}
+          sortOption={filters.sortOption}
+          onSortChange={filters.setSortOption}
+          totalCount={filters.totalCount}
+          filteredCount={filters.filteredCount}
+        />
+      )}
+
       <ResultsTable
         results={[]}
         verdictOptions="dataset"
-        datasetCases={dataset.cases}
+        datasetCases={filters.filteredCases}
         onDatasetLabel={onLabel}
         onDeleteCase={onDeleteCase}
+        onTagCase={onTagCase}
+        onDatasetLabel2={onLabel2}
       />
     </div>
   );
@@ -300,8 +353,8 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
   });
   const labelRunCase = useLabelRunCase();
 
-  const handleRunLabel = (runCaseId: number, label: DatasetLabel, notes?: string) => {
-    labelRunCase.mutate({ id: runCaseId, label, notes: notes ?? null, labeledBy: null });
+  const handleRunLabel = (runCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => {
+    labelRunCase.mutate({ id: runCaseId, label, notes: notes ?? null, labeledBy: null, confidence, disagreementReason, disagreementNotes });
   };
 
   const mappedCases: DatasetCase[] = useMemo(() => {
@@ -317,10 +370,21 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
       labelNotes: rc.labelNotes,
       labeledBy: rc.labeledBy,
       labeledAt: rc.labeledAt,
+      labelConfidence: rc.labelConfidence ?? null,
+      disagreementReason: rc.disagreementReason ?? null,
+      disagreementNotes: rc.disagreementNotes ?? null,
+      label2: null,
+      label2Notes: null,
+      label2By: null,
+      label2At: null,
+      label2Confidence: null,
+      manualTags: [],
       autoTags: {},
       createdAt: '',
     }));
   }, [runCases, datasetId]);
+
+  const filters = useCaseFilters(mappedCases);
 
   const agreementMap: Record<number, boolean | null> = useMemo(() => {
     if (!runCases) return {};
@@ -437,11 +501,27 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
         </Card>
       )}
 
+      {/* Filter bar */}
+      {mappedCases.length > 0 && (
+        <CaseFilterBar
+          labelFilter={filters.labelFilter}
+          onLabelFilterChange={filters.setLabelFilter}
+          riskFilter={filters.riskFilter}
+          onRiskFilterChange={filters.setRiskFilter}
+          hardGateFilter={filters.hardGateFilter}
+          onHardGateFilterChange={filters.setHardGateFilter}
+          sortOption={filters.sortOption}
+          onSortChange={filters.setSortOption}
+          totalCount={filters.totalCount}
+          filteredCount={filters.filteredCount}
+        />
+      )}
+
       {/* Run case cards */}
       <ResultsTable
         results={[]}
         verdictOptions="dataset"
-        datasetCases={mappedCases}
+        datasetCases={filters.filteredCases}
         onDatasetLabel={handleRunLabel}
         agreementMap={agreementMap}
       />

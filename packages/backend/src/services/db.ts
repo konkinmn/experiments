@@ -285,6 +285,77 @@ async function applyMigrations(): Promise<void> {
       `);
     }
 
+    // Migration 012: add label_confidence, disagreement_reason, disagreement_notes to both tables
+    const { rows: confidenceCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_cases' AND column_name = 'label_confidence'`,
+    );
+    if (confidenceCol.length === 0) {
+      await pool.query(`
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS label_confidence TEXT CHECK (label_confidence IN ('high', 'medium', 'low'));
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS disagreement_reason TEXT CHECK (disagreement_reason IN ('signal_quality', 'rubric_issue', 'llm_reasoning', 'human_label_wrong', 'edge_case', 'other'));
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS disagreement_notes TEXT;
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS label_confidence TEXT CHECK (label_confidence IN ('high', 'medium', 'low'));
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS disagreement_reason TEXT CHECK (disagreement_reason IN ('signal_quality', 'rubric_issue', 'llm_reasoning', 'human_label_wrong', 'edge_case', 'other'));
+        ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS disagreement_notes TEXT;
+      `);
+    }
+
+    // Migration 013: add manual_tags to dataset_cases
+    const { rows: manualTagsCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_cases' AND column_name = 'manual_tags'`,
+    );
+    if (manualTagsCol.length === 0) {
+      await pool.query(`
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS manual_tags TEXT[] DEFAULT '{}';
+      `);
+    }
+
+    // Migration 014: add second-labeler columns to dataset_cases
+    const { rows: label2Col } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_cases' AND column_name = 'label_2'`,
+    );
+    if (label2Col.length === 0) {
+      await pool.query(`
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS label_2 TEXT CHECK (label_2 IN ('credit', 'escalate', 'undecided'));
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS label_2_notes TEXT;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS label_2_by TEXT;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS label_2_at TIMESTAMPTZ;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS label_2_confidence TEXT CHECK (label_2_confidence IN ('high', 'medium', 'low'));
+      `);
+    }
+
+    // Migration 015: create dataset_compositions table
+    const { rows: compTable } = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'dataset_compositions'`,
+    );
+    if (compTable.length === 0) {
+      await pool.query(`
+        CREATE TABLE dataset_compositions (
+          id SERIAL PRIMARY KEY,
+          parent_dataset_id INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+          child_dataset_id INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+          UNIQUE(parent_dataset_id, child_dataset_id)
+        );
+      `);
+    }
+
+    // Migration 016: add 'composition' to datasets.source_type CHECK constraint
+    const { rows: sourceTypeCheck } = await pool.query(
+      `SELECT 1 FROM pg_constraint
+       WHERE conname = 'datasets_source_type_check'
+         AND pg_get_constraintdef(oid) NOT LIKE '%composition%'`,
+    );
+    if (sourceTypeCheck.length > 0) {
+      await pool.query(`
+        ALTER TABLE datasets DROP CONSTRAINT IF EXISTS datasets_source_type_check;
+        ALTER TABLE datasets ADD CONSTRAINT datasets_source_type_check
+          CHECK (source_type IN ('case_ids', 'custom_sql', 'composition'));
+      `);
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -624,15 +695,19 @@ export async function updateDatasetCaseLabel(
   label: DatasetLabel,
   notes: string | null,
   labeledBy: string | null,
+  confidence: string | null = null,
+  disagreementReason: string | null = null,
+  disagreementNotes: string | null = null,
 ): Promise<DatasetCaseRow | null> {
   await ensureMigrations();
   const pool = getPool();
   const { rows } = await pool.query<DatasetCaseRow>(
     `UPDATE dataset_cases
-     SET label = $1, label_notes = $2, labeled_by = $3, labeled_at = now()
+     SET label = $1, label_notes = $2, labeled_by = $3, labeled_at = now(),
+         label_confidence = $5, disagreement_reason = $6, disagreement_notes = $7
      WHERE id = $4
      RETURNING *`,
-    [label, notes, labeledBy, id],
+    [label, notes, labeledBy, id, confidence, disagreementReason, disagreementNotes],
   );
   return rows[0] ?? null;
 }
@@ -642,15 +717,19 @@ export async function updateDatasetRunCaseLabel(
   label: DatasetLabel,
   notes: string | null,
   labeledBy: string | null,
+  confidence: string | null = null,
+  disagreementReason: string | null = null,
+  disagreementNotes: string | null = null,
 ): Promise<DatasetRunCaseDbRow | null> {
   await ensureMigrations();
   const pool = getPool();
   const { rows } = await pool.query<DatasetRunCaseDbRow>(
     `UPDATE dataset_run_cases
-     SET label = $1, label_notes = $2, labeled_by = $3, labeled_at = now()
+     SET label = $1, label_notes = $2, labeled_by = $3, labeled_at = now(),
+         label_confidence = $5, disagreement_reason = $6, disagreement_notes = $7
      WHERE id = $4
      RETURNING *, (SELECT case_id FROM dataset_cases WHERE id = dataset_case_id) AS case_id`,
-    [label, notes, labeledBy, id],
+    [label, notes, labeledBy, id, confidence, disagreementReason, disagreementNotes],
   );
   return rows[0] ?? null;
 }
@@ -877,6 +956,9 @@ interface DatasetRunCaseDbRow {
   label_notes: string | null;
   labeled_by: string | null;
   labeled_at: string | null;
+  label_confidence: string | null;
+  disagreement_reason: string | null;
+  disagreement_notes: string | null;
 }
 
 export async function getDatasetRunCases(runId: number): Promise<
@@ -891,6 +973,9 @@ export async function getDatasetRunCases(runId: number): Promise<
     label_notes: string | null;
     labeled_by: string | null;
     labeled_at: string | null;
+    label_confidence: string | null;
+    disagreement_reason: string | null;
+    disagreement_notes: string | null;
     pipeline_run: PipelineRunRow | null;
   }>
 > {
@@ -898,7 +983,8 @@ export async function getDatasetRunCases(runId: number): Promise<
   const pool = getPool();
   const { rows } = await pool.query<DatasetRunCaseDbRow>(
     `SELECT rc.id, rc.run_id, rc.dataset_case_id, rc.pipeline_run_id, rc.pipeline_error, rc.created_at,
-            dc.case_id, rc.label, rc.label_notes, rc.labeled_by, rc.labeled_at
+            dc.case_id, rc.label, rc.label_notes, rc.labeled_by, rc.labeled_at,
+            rc.label_confidence, rc.disagreement_reason, rc.disagreement_notes
      FROM dataset_run_cases rc
      JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
      WHERE rc.run_id = $1
@@ -924,6 +1010,9 @@ export async function getDatasetRunCases(runId: number): Promise<
     label_notes: r.label_notes,
     labeled_by: r.labeled_by,
     labeled_at: r.labeled_at,
+    label_confidence: r.label_confidence,
+    disagreement_reason: r.disagreement_reason,
+    disagreement_notes: r.disagreement_notes,
     pipeline_run: r.pipeline_run_id ? (runMap.get(r.pipeline_run_id) ?? null) : null,
   }));
 }
@@ -940,12 +1029,25 @@ export async function updateDatasetCaseAutoTags(
   );
 }
 
+export async function updateDatasetCaseTags(
+  id: number,
+  tags: string[],
+): Promise<DatasetCaseRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetCaseRow>(
+    `UPDATE dataset_cases SET manual_tags = $1 WHERE id = $2 RETURNING *`,
+    [tags, id],
+  );
+  return rows[0] ?? null;
+}
+
 export async function getDatasetAnalytics(
   datasetId: number,
   runId?: number,
 ): Promise<{
   confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; undecided: number };
-  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null }>;
+  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null }>;
 }> {
   await ensureMigrations();
   const pool = getPool();
@@ -957,8 +1059,12 @@ export async function getDatasetAnalytics(
       label: string | null;
       pipeline_decision: string | null;
       hard_gate_triggered: string | null;
+      label_confidence: string | null;
+      disagreement_reason: string | null;
+      label_2: string | null;
     }>(
-      `SELECT dc.auto_tags, rc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered
+      `SELECT dc.auto_tags, rc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered,
+              rc.label_confidence, rc.disagreement_reason, NULL AS label_2
        FROM dataset_run_cases rc
        JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
        LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
@@ -974,8 +1080,12 @@ export async function getDatasetAnalytics(
       label: string | null;
       pipeline_decision: string | null;
       hard_gate_triggered: string | null;
+      label_confidence: string | null;
+      disagreement_reason: string | null;
+      label_2: string | null;
     }>(
-      `SELECT dc.auto_tags, dc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered
+      `SELECT dc.auto_tags, dc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered,
+              dc.label_confidence, dc.disagreement_reason, dc.label_2
        FROM dataset_cases dc
        LEFT JOIN dispute_pipeline_runs pr ON pr.id = dc.pipeline_run_id
        WHERE dc.dataset_id = $1`,
@@ -987,7 +1097,7 @@ export async function getDatasetAnalytics(
 }
 
 function computeAnalyticsFromRows(
-  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null }>
+  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null }>
 ) {
   let true_credit = 0, false_credit = 0, true_escalate = 0, false_escalate = 0, unlabeled = 0, undecided = 0;
 
@@ -1009,6 +1119,112 @@ function computeAnalyticsFromRows(
     confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, undecided },
     rows,
   };
+}
+
+export interface ComparisonRow {
+  dataset_case_id: number;
+  case_id: number;
+  label: string | null;
+  run_a_decision: string | null;
+  run_a_hard_gate: string | null;
+  run_b_decision: string | null;
+  run_b_hard_gate: string | null;
+}
+
+export async function getComparisonData(
+  datasetId: number,
+  runAId: number,
+  runBId: number,
+): Promise<ComparisonRow[]> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<ComparisonRow>(
+    `SELECT
+       dc.id AS dataset_case_id, dc.case_id, dc.label,
+       prA.planner_output->>'decision' AS run_a_decision, prA.hard_gate_triggered AS run_a_hard_gate,
+       prB.planner_output->>'decision' AS run_b_decision, prB.hard_gate_triggered AS run_b_hard_gate
+     FROM dataset_cases dc
+     JOIN dataset_run_cases rcA ON rcA.dataset_case_id = dc.id AND rcA.run_id = $2
+     JOIN dataset_run_cases rcB ON rcB.dataset_case_id = dc.id AND rcB.run_id = $3
+     LEFT JOIN dispute_pipeline_runs prA ON prA.id = rcA.pipeline_run_id
+     LEFT JOIN dispute_pipeline_runs prB ON prB.id = rcB.pipeline_run_id
+     WHERE dc.dataset_id = $1
+     ORDER BY dc.case_id`,
+    [datasetId, runAId, runBId],
+  );
+  return rows;
+}
+
+export async function updateDatasetCaseLabel2(
+  id: number,
+  label: DatasetLabel,
+  notes: string | null,
+  labeledBy: string | null,
+  confidence: string | null = null,
+): Promise<DatasetCaseRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetCaseRow>(
+    `UPDATE dataset_cases
+     SET label_2 = $1, label_2_notes = $2, label_2_by = $3, label_2_at = now(), label_2_confidence = $5
+     WHERE id = $4
+     RETURNING *`,
+    [label, notes, labeledBy, id, confidence],
+  );
+  return rows[0] ?? null;
+}
+
+export async function composeDatasets(
+  name: string,
+  description: string | null,
+  datasetIds: number[],
+): Promise<{ dataset: DatasetRow; caseCount: number }> {
+  await ensureMigrations();
+  const pool = getPool();
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Create the composite dataset
+    const { rows: [dataset] } = await client.query<DatasetRow>(
+      `INSERT INTO datasets (name, description, source_type, source_config)
+       VALUES ($1, $2, 'composition', $3)
+       RETURNING *`,
+      [name, description, JSON.stringify({ dataset_ids: datasetIds })],
+    );
+
+    // Copy cases from child datasets, deduplicating by case_id
+    const { rowCount } = await client.query(
+      `INSERT INTO dataset_cases (dataset_id, case_id, pipeline_run_id, label, label_notes, labeled_by, labeled_at,
+         label_confidence, disagreement_reason, disagreement_notes, label_2, label_2_notes, label_2_by, label_2_at,
+         label_2_confidence, manual_tags, auto_tags)
+       SELECT DISTINCT ON (dc.case_id)
+         $1, dc.case_id, dc.pipeline_run_id, dc.label, dc.label_notes, dc.labeled_by, dc.labeled_at,
+         dc.label_confidence, dc.disagreement_reason, dc.disagreement_notes, dc.label_2, dc.label_2_notes,
+         dc.label_2_by, dc.label_2_at, dc.label_2_confidence, dc.manual_tags, dc.auto_tags
+       FROM dataset_cases dc
+       WHERE dc.dataset_id = ANY($2)
+       ORDER BY dc.case_id, dc.labeled_at DESC NULLS LAST`,
+      [dataset.id, datasetIds],
+    );
+
+    // Insert composition records
+    for (const childId of datasetIds) {
+      await client.query(
+        `INSERT INTO dataset_compositions (parent_dataset_id, child_dataset_id) VALUES ($1, $2)`,
+        [dataset.id, childId],
+      );
+    }
+
+    await client.query('COMMIT');
+    return { dataset, caseCount: rowCount ?? 0 };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export async function closePool(): Promise<void> {

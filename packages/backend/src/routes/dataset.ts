@@ -23,13 +23,17 @@ import {
   getDatasetRunCases,
   updateDatasetRunCaseLabel,
   updateDatasetCaseAutoTags,
+  updateDatasetCaseTags,
   getDatasetAnalytics,
+  getComparisonData,
+  updateDatasetCaseLabel2,
+  composeDatasets,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
 import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig } from '../types/dispute-pipeline.js';
 import { DEFAULT_RUBRIC_WEIGHTS } from '../services/dispute-pipeline.js';
 import { listPrompts } from '../services/prompts.js';
-import { deriveAutoTags, computeFullAnalytics } from '../services/dataset-analytics.js';
+import { deriveAutoTags, computeFullAnalytics, computeRunComparison } from '../services/dataset-analytics.js';
 
 const CreateDatasetSchema = z.object({
   name: z.string().min(1),
@@ -42,6 +46,9 @@ const LabelSchema = z.object({
   label: z.enum(['credit', 'escalate', 'undecided']),
   notes: z.string().nullable().optional(),
   labeledBy: z.string().nullable().optional(),
+  confidence: z.enum(['high', 'medium', 'low']).nullable().optional(),
+  disagreementReason: z.enum(['signal_quality', 'rubric_issue', 'llm_reasoning', 'human_label_wrong', 'edge_case', 'other']).nullable().optional(),
+  disagreementNotes: z.string().nullable().optional(),
 });
 
 function formatDataset(d: DatasetRow & { total_cases?: number; labeled_cases?: number }) {
@@ -69,6 +76,15 @@ function formatDatasetCase(row: DatasetCaseRow, pipelineRun: PipelineRunRow | nu
     labelNotes: row.label_notes,
     labeledBy: row.labeled_by,
     labeledAt: row.labeled_at,
+    labelConfidence: row.label_confidence ?? null,
+    disagreementReason: row.disagreement_reason ?? null,
+    disagreementNotes: row.disagreement_notes ?? null,
+    label2: row.label_2 ?? null,
+    label2Notes: row.label_2_notes ?? null,
+    label2By: row.label_2_by ?? null,
+    label2At: row.label_2_at ?? null,
+    label2Confidence: row.label_2_confidence ?? null,
+    manualTags: row.manual_tags ?? [],
     autoTags: row.auto_tags ?? {},
     createdAt: row.created_at,
   };
@@ -269,7 +285,10 @@ export async function datasetRoutes(app: FastifyInstance) {
 
     try {
       const body = LabelSchema.parse(request.body);
-      const row = await updateDatasetCaseLabel(id, body.label, body.notes ?? null, body.labeledBy ?? null);
+      const row = await updateDatasetCaseLabel(
+        id, body.label, body.notes ?? null, body.labeledBy ?? null,
+        body.confidence ?? null, body.disagreementReason ?? null, body.disagreementNotes ?? null,
+      );
       if (!row) {
         return reply.status(404).send({ error: 'Dataset case not found' });
       }
@@ -425,6 +444,9 @@ export async function datasetRoutes(app: FastifyInstance) {
         labelNotes: rc.label_notes,
         labeledBy: rc.labeled_by,
         labeledAt: rc.labeled_at,
+        labelConfidence: rc.label_confidence,
+        disagreementReason: rc.disagreement_reason,
+        disagreementNotes: rc.disagreement_notes,
         pipelineRunId: rc.pipeline_run_id,
         pipelineError: rc.pipeline_error,
         pipelineRun: rc.pipeline_run ? formatPipelineRun(rc.pipeline_run) : null,
@@ -442,7 +464,10 @@ export async function datasetRoutes(app: FastifyInstance) {
 
     try {
       const body = LabelSchema.parse(request.body);
-      const row = await updateDatasetRunCaseLabel(id, body.label, body.notes ?? null, body.labeledBy ?? null);
+      const row = await updateDatasetRunCaseLabel(
+        id, body.label, body.notes ?? null, body.labeledBy ?? null,
+        body.confidence ?? null, body.disagreementReason ?? null, body.disagreementNotes ?? null,
+      );
       if (!row) {
         return reply.status(404).send({ error: 'Run case not found' });
       }
@@ -474,6 +499,109 @@ export async function datasetRoutes(app: FastifyInstance) {
       return computeFullAnalytics(confusion_matrix, rows);
     },
   );
+
+  // GET /:id/compare — Compare two runs
+  app.get<{ Params: { id: string }; Querystring: { runA: string; runB: string } }>(
+    '/:id/compare',
+    async (request, reply) => {
+      const datasetId = parseInt(request.params.id, 10);
+      if (isNaN(datasetId)) {
+        return reply.status(400).send({ error: 'Invalid dataset ID' });
+      }
+      const runA = parseInt(request.query.runA, 10);
+      const runB = parseInt(request.query.runB, 10);
+      if (isNaN(runA) || isNaN(runB) || runA <= 0 || runB <= 0) {
+        return reply.status(400).send({ error: 'Invalid run IDs — provide runA and runB query parameters' });
+      }
+      if (runA === runB) {
+        return reply.status(400).send({ error: 'Cannot compare a run with itself' });
+      }
+
+      const rows = await getComparisonData(datasetId, runA, runB);
+      return computeRunComparison(rows);
+    },
+  );
+
+  // PATCH /cases/:id/tags — Set manual tags
+  const TagsSchema = z.object({
+    tags: z.array(z.string()),
+  });
+
+  app.patch<{ Params: { id: string } }>('/cases/:id/tags', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+    try {
+      const body = TagsSchema.parse(request.body);
+      const row = await updateDatasetCaseTags(id, body.tags);
+      if (!row) {
+        return reply.status(404).send({ error: 'Dataset case not found' });
+      }
+      return formatDatasetCase(row, null);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      throw error;
+    }
+  });
+
+  // PATCH /cases/:id/label-2 — Save second labeler's verdict
+  const Label2Schema = z.object({
+    label: z.enum(['credit', 'escalate', 'undecided']),
+    notes: z.string().nullable().optional(),
+    labeledBy: z.string().nullable().optional(),
+    confidence: z.enum(['high', 'medium', 'low']).nullable().optional(),
+  });
+
+  app.patch<{ Params: { id: string } }>('/cases/:id/label-2', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+    try {
+      const body = Label2Schema.parse(request.body);
+      const row = await updateDatasetCaseLabel2(
+        id, body.label, body.notes ?? null, body.labeledBy ?? null, body.confidence ?? null,
+      );
+      if (!row) {
+        return reply.status(404).send({ error: 'Dataset case not found' });
+      }
+      return formatDatasetCase(row, null);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      throw error;
+    }
+  });
+
+  // POST /compose — Create a composed dataset from multiple datasets
+  const ComposeSchema = z.object({
+    name: z.string().min(1),
+    description: z.string().nullable().optional(),
+    datasetIds: z.array(z.number().int().positive()).min(2),
+  });
+
+  app.post('/compose', async (request, reply) => {
+    try {
+      const body = ComposeSchema.parse(request.body);
+      const { dataset, caseCount } = await composeDatasets(
+        body.name, body.description ?? null, body.datasetIds,
+      );
+      return reply.status(201).send({
+        ...formatDataset(dataset),
+        totalCases: caseCount,
+        labeledCases: 0,
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      throw error;
+    }
+  });
 
 }
 

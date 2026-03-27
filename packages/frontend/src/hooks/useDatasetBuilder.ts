@@ -53,8 +53,8 @@ export function useDataset(id: number, options?: { enabled?: boolean }) {
 export function useLabelDatasetCase() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, label, notes, labeledBy }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null }) =>
-      api.labelDatasetCase(id, label, notes, labeledBy),
+    mutationFn: ({ id, label, notes, labeledBy, confidence, disagreementReason, disagreementNotes }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null; confidence?: string | null; disagreementReason?: string | null; disagreementNotes?: string | null }) =>
+      api.labelDatasetCase(id, label, notes, labeledBy, confidence, disagreementReason, disagreementNotes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataset'] });
       queryClient.invalidateQueries({ queryKey: ['datasets'] });
@@ -76,8 +76,8 @@ export function useDeleteDatasetCase() {
 export function useLabelRunCase() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, label, notes, labeledBy }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null }) =>
-      api.labelRunCase(id, label, notes, labeledBy),
+    mutationFn: ({ id, label, notes, labeledBy, confidence, disagreementReason, disagreementNotes }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null; confidence?: string | null; disagreementReason?: string | null; disagreementNotes?: string | null }) =>
+      api.labelRunCase(id, label, notes, labeledBy, confidence, disagreementReason, disagreementNotes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataset-run-cases'] });
       queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });
@@ -143,6 +143,50 @@ export function useDatasetAnalytics(datasetId: number, runId?: number, options?:
     queryKey: ['dataset-analytics', datasetId, runId],
     queryFn: () => api.getDatasetAnalytics(datasetId, runId),
     enabled: options?.enabled ?? true,
+  });
+}
+
+export function useTagCase() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, tags }: { id: number; tags: string[] }) =>
+      api.tagDatasetCase(id, tags),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+    },
+  });
+}
+
+export function useLabelDatasetCase2() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, label, notes, labeledBy, confidence }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null; confidence?: string | null }) =>
+      api.labelDatasetCase2(id, label, notes, labeledBy, confidence),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset'] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-analytics'] });
+    },
+  });
+}
+
+export function useComposeDatasets() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, description, datasetIds }: { name: string; description: string | null; datasetIds: number[] }) =>
+      api.composeDatasets(name, description, datasetIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+    },
+  });
+}
+
+export function useRunComparison(datasetId: number, runA?: number, runB?: number) {
+  return useQuery({
+    queryKey: ['run-comparison', datasetId, runA, runB],
+    queryFn: () => api.compareRuns(datasetId, runA!, runB!),
+    enabled: !!runA && !!runB && runA !== runB,
   });
 }
 

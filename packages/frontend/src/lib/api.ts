@@ -16,6 +16,7 @@ import type {
   RunOptions,
   RubricWeights,
   DatasetAnalytics,
+  RunComparisonResult,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -109,16 +110,16 @@ export const api = {
       method: 'DELETE',
     }),
 
-  labelDatasetCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null) =>
+  labelDatasetCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) =>
     fetchApi<DatasetCase>(`/api/datasets/cases/${id}/label`, {
       method: 'PATCH',
-      body: JSON.stringify({ label, notes, labeledBy }),
+      body: JSON.stringify({ label, notes, labeledBy, confidence: confidence ?? null, disagreementReason: disagreementReason ?? null, disagreementNotes: disagreementNotes ?? null }),
     }),
 
-  labelRunCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null) =>
+  labelRunCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) =>
     fetchApi<{ success: boolean }>(`/api/datasets/run-cases/${id}/label`, {
       method: 'PATCH',
-      body: JSON.stringify({ label, notes, labeledBy }),
+      body: JSON.stringify({ label, notes, labeledBy, confidence: confidence ?? null, disagreementReason: disagreementReason ?? null, disagreementNotes: disagreementNotes ?? null }),
     }),
 
   deleteDatasetCase: (id: number) =>
@@ -148,4 +149,24 @@ export const api = {
     return fetchApi<DatasetAnalytics>(`/api/datasets/${datasetId}/analytics${params}`);
   },
 
+  labelDatasetCase2: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null, confidence?: string | null) =>
+    fetchApi<DatasetCase>(`/api/datasets/cases/${id}/label-2`, {
+      method: 'PATCH',
+      body: JSON.stringify({ label, notes, labeledBy, confidence: confidence ?? null }),
+    }),
+
+  composeDatasets: (name: string, description: string | null, datasetIds: number[]) =>
+    fetchApi<Dataset>('/api/datasets/compose', {
+      method: 'POST',
+      body: JSON.stringify({ name, description, datasetIds }),
+    }),
+
+  compareRuns: (datasetId: number, runA: number, runB: number) =>
+    fetchApi<RunComparisonResult>(`/api/datasets/${datasetId}/compare?runA=${runA}&runB=${runB}`),
+
+  tagDatasetCase: (id: number, tags: string[]) =>
+    fetchApi<DatasetCase>(`/api/datasets/cases/${id}/tags`, {
+      method: 'PATCH',
+      body: JSON.stringify({ tags }),
+    }),
 };
