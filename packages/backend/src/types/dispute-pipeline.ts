@@ -206,6 +206,7 @@ export interface DatasetRun {
   agreement_rate: number | null;
   credit_precision: number | null;
   escalate_recall: number | null;
+  false_credit_rate: number | null;
 }
 
 export interface DatasetRunCase {
@@ -219,8 +220,10 @@ export interface DatasetRunCase {
 
 // --- Dataset Builder types ---
 
-export type DatasetLabel = 'credit' | 'escalate' | 'needs_more_info';
-export type DatasetSourceType = 'case_ids' | 'custom_sql';
+export type DatasetLabel = 'credit' | 'escalate' | 'undecided';
+export type LabelConfidence = 'high' | 'medium' | 'low';
+export type DisagreementReason = 'signal_quality' | 'rubric_issue' | 'llm_reasoning' | 'human_label_wrong' | 'edge_case' | 'other';
+export type DatasetSourceType = 'case_ids' | 'custom_sql' | 'composition';
 
 export interface DatasetRow {
   id: number;
@@ -246,6 +249,16 @@ export interface DatasetCaseRow {
   label_notes: string | null;
   labeled_by: string | null;
   labeled_at: string | null;
+  label_confidence: LabelConfidence | null;
+  disagreement_reason: DisagreementReason | null;
+  disagreement_notes: string | null;
+  label_2: DatasetLabel | null;
+  label_2_notes: string | null;
+  label_2_by: string | null;
+  label_2_at: string | null;
+  label_2_confidence: LabelConfidence | null;
+  manual_tags: string[];
+  auto_tags: Record<string, string | boolean>;
   created_at: string;
 }
 

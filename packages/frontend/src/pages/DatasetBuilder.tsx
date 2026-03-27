@@ -12,17 +12,19 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { useDatasets, useCreateDataset, useDeleteDataset } from '@/hooks/useDatasetBuilder';
+import { useDatasets, useCreateDataset, useDeleteDataset, useComposeDatasets } from '@/hooks/useDatasetBuilder';
 import type { Dataset, DatasetSourceType } from '@/types';
 
 const SOURCE_TYPE_LABELS: Record<DatasetSourceType, string> = {
   case_ids: 'Case IDs',
   custom_sql: 'Custom SQL',
+  composition: 'Composition',
 };
 
-const SOURCE_TYPE_VARIANT: Record<DatasetSourceType, 'green' | 'amber'> = {
+const SOURCE_TYPE_VARIANT: Record<DatasetSourceType, 'green' | 'amber' | 'blue'> = {
   case_ids: 'green',
   custom_sql: 'amber',
+  composition: 'blue',
 };
 
 export function DatasetBuilder() {
@@ -30,7 +32,17 @@ export function DatasetBuilder() {
   const { data: datasets = [], isLoading } = useDatasets();
   const deleteDataset = useDeleteDataset();
   const [modalOpen, setModalOpen] = useState(false);
+  const [composeModalOpen, setComposeModalOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const handleDelete = (id: number) => {
     deleteDataset.mutate(id, {
@@ -54,10 +66,17 @@ export function DatasetBuilder() {
               </p>
             </div>
           </div>
-          <Button onClick={() => setModalOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New dataset
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedIds.size >= 2 && (
+              <Button variant="outline" onClick={() => setComposeModalOpen(true)}>
+                Compose ({selectedIds.size})
+              </Button>
+            )}
+            <Button onClick={() => setModalOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              New dataset
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -79,6 +98,8 @@ export function DatasetBuilder() {
             <DatasetCard
               key={dataset.id}
               dataset={dataset}
+              selected={selectedIds.has(dataset.id)}
+              onToggleSelect={() => toggleSelect(dataset.id)}
               onClick={() => navigate(`/dataset/${dataset.id}`)}
               onDeleteClick={() => setDeleteConfirmId(dataset.id)}
             />
@@ -92,6 +113,18 @@ export function DatasetBuilder() {
         onOpenChange={setModalOpen}
         onCreated={(id) => {
           setModalOpen(false);
+          navigate(`/dataset/${id}`);
+        }}
+      />
+
+      {/* Compose Modal */}
+      <ComposeModal
+        open={composeModalOpen}
+        onOpenChange={setComposeModalOpen}
+        datasets={datasets.filter((d) => selectedIds.has(d.id))}
+        onCreated={(id) => {
+          setComposeModalOpen(false);
+          setSelectedIds(new Set());
           navigate(`/dataset/${id}`);
         }}
       />
@@ -126,10 +159,14 @@ export function DatasetBuilder() {
 
 function DatasetCard({
   dataset,
+  selected,
+  onToggleSelect,
   onClick,
   onDeleteClick,
 }: {
   dataset: Dataset;
+  selected: boolean;
+  onToggleSelect: () => void;
   onClick: () => void;
   onDeleteClick: () => void;
 }) {
@@ -141,6 +178,13 @@ function DatasetCard({
       onClick={onClick}
     >
       <div className="flex items-center gap-4">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={(e) => { e.stopPropagation(); onToggleSelect(); }}
+          onClick={(e) => e.stopPropagation()}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 shrink-0"
+        />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="font-semibold text-gray-900 truncate">{dataset.name}</h3>
@@ -345,6 +389,73 @@ function NewDatasetModal({
           <p className="text-sm text-red-600 mt-2">
             Error: {createDataset.error?.message}
           </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ComposeModal({
+  open,
+  onOpenChange,
+  datasets,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  datasets: Dataset[];
+  onCreated: (id: number) => void;
+}) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const compose = useComposeDatasets();
+
+  const totalCases = datasets.reduce((sum, d) => sum + d.totalCases, 0);
+
+  const handleCompose = () => {
+    compose.mutate(
+      { name, description: description || null, datasetIds: datasets.map((d) => d.id) },
+      { onSuccess: (data) => { setName(''); setDescription(''); onCreated(data.id); } },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(val) => { if (!val) { setName(''); setDescription(''); } onOpenChange(val); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Compose datasets</DialogTitle>
+          <DialogDescription>
+            Merge {datasets.length} datasets into a new composite dataset. Duplicate case IDs will be deduplicated.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Name</label>
+            <Input placeholder="e.g. Combined Q1 evaluation" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Description</label>
+            <Input placeholder="Optional" value={description} onChange={(e) => setDescription(e.target.value)} />
+          </div>
+          <div className="text-sm text-muted-foreground">
+            <p className="font-medium text-gray-700 mb-1">Selected datasets:</p>
+            <ul className="list-disc ml-5 space-y-0.5">
+              {datasets.map((d) => (
+                <li key={d.id}>{d.name} ({d.totalCases} cases)</li>
+              ))}
+            </ul>
+            <p className="mt-2">Total: up to {totalCases} cases (after deduplication)</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleCompose} disabled={!name.trim() || compose.isPending}>
+            {compose.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Compose
+          </Button>
+        </DialogFooter>
+        {compose.isError && (
+          <p className="text-sm text-red-600 mt-2">Error: {compose.error?.message}</p>
         )}
       </DialogContent>
     </Dialog>
