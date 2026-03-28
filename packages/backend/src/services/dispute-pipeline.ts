@@ -8,6 +8,7 @@ import { insertPipelineRun } from './db.js';
 import type {
   CaseSignalsRaw,
   CaseAction,
+  CaseContext,
   DialogueMessage,
   HardGateSignals,
   DisputeProfile,
@@ -440,15 +441,10 @@ async function callPlanner(
   }
 }
 
-// --- Pipeline orchestrator ---
+// --- Context fetcher (dataset creation — no LLM planner) ---
 
-export async function runDisputePipeline(
-  caseId: number,
-  runConfig?: RunConfig,
-): Promise<PipelineRunRow> {
-  const start = Date.now();
-
-  // Layer 0: Fetch signals + case details + case actions in parallel
+export async function fetchCaseContext(caseId: number): Promise<CaseContext> {
+  // Fetch signals + case details + case actions in parallel
   const [rawSignals, caseDetails, caseActions] = await Promise.all([
     fetchCaseSignals(caseId),
     fetchCaseDetails(caseId).catch((err) => {
@@ -457,6 +453,92 @@ export async function runDisputePipeline(
     }),
     fetchCaseActions(caseId),
   ]);
+
+  // Extract FILE and DIALOGUE artifacts from case details
+  const allArtifacts = caseDetails ? (caseDetails.artifacts as unknown[]) : [];
+  const fileArtifacts = allArtifacts.filter((a) => {
+    if (typeof a === 'object' && a !== null && 'artifact_type' in a) {
+      return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'FILE';
+    }
+    return false;
+  });
+  const dialogueArtifactIds = allArtifacts
+    .filter((a) => {
+      if (typeof a === 'object' && a !== null && 'artifact_type' in a) {
+        return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'DIALOGUE';
+      }
+      return false;
+    })
+    .map((a) => {
+      const art = a as { id?: number; artifact_id?: string };
+      return art.artifact_id ?? String(art.id);
+    });
+
+  // Fetch dialogue + parse files in parallel
+  const [dialoguesFetchResult, parsedFileDescriptions] = await Promise.all([
+    fetchCaseDialogues(dialogueArtifactIds),
+    fetchAndParseFileArtifacts(fileArtifacts),
+  ]);
+
+  const allCustomerMessages = filterCustomerMessages(dialoguesFetchResult.messages);
+  allCustomerMessages.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const customerDialogueMessages = allCustomerMessages.slice(-MAX_DIALOGUE_MESSAGES);
+
+  const filteredDetails = caseDetails
+    ? {
+        id: caseDetails.id,
+        ref_id: caseDetails.ref_id,
+        alias: caseDetails.alias,
+        issue_type_id: caseDetails.issue_type_id,
+        artifacts: filterCaseArtifacts(caseDetails.artifacts as unknown[]),
+      }
+    : null;
+
+  return {
+    raw_signals: rawSignals,
+    case_details: filteredDetails,
+    case_actions: caseActions.length > 0 ? caseActions : null,
+    dialogue_messages: customerDialogueMessages.length > 0 ? customerDialogueMessages : null,
+    file_parse_results: parsedFileDescriptions.length > 0 ? parsedFileDescriptions : null,
+    enrichment_metadata: {
+      ...dialoguesFetchResult.metadata,
+      total_messages_fetched: dialoguesFetchResult.messages.length,
+      customer_messages_filtered: allCustomerMessages.length,
+      customer_messages_sent_to_planner: customerDialogueMessages.length,
+      file_artifacts_found: fileArtifacts.length,
+      file_descriptions_parsed: parsedFileDescriptions.length,
+    },
+  };
+}
+
+// --- Pipeline orchestrator ---
+
+export async function runDisputePipeline(
+  caseId: number,
+  runConfig?: RunConfig,
+  cachedContext?: CaseContext,
+): Promise<PipelineRunRow> {
+  const start = Date.now();
+
+  // Layer 0: Use cached context or fetch fresh
+  let rawSignals: CaseSignalsRaw;
+  let caseDetails: unknown | null;
+  let caseActions: CaseAction[];
+
+  if (cachedContext) {
+    rawSignals = cachedContext.raw_signals;
+    caseDetails = cachedContext.case_details;
+    caseActions = cachedContext.case_actions ?? [];
+  } else {
+    [rawSignals, caseDetails, caseActions] = await Promise.all([
+      fetchCaseSignals(caseId),
+      fetchCaseDetails(caseId).catch((err) => {
+        console.warn(`Failed to fetch case details for ${caseId}:`, err.message);
+        return null;
+      }),
+      fetchCaseActions(caseId),
+    ]);
+  }
 
   // Build dispute profile (use rubric weights from run config if provided)
   const hardGates = deriveHardGates(rawSignals);
@@ -469,61 +551,69 @@ export async function runDisputePipeline(
   let plannerRawResponse: string | null = null;
   let plannerRequest: Record<string, unknown> | null = null;
   let plannerSystemPrompt: string | null = null;
-  let fileParseResults: string[] | null = null;
-  let dialogueMessages: DialogueMessage[] | null = null;
-  let enrichmentMetadata: Record<string, unknown> | null = null;
+  let fileParseResults: string[] | null = cachedContext?.file_parse_results ?? null;
+  let dialogueMessages: DialogueMessage[] | null = cachedContext?.dialogue_messages ?? null;
+  let enrichmentMetadata: Record<string, unknown> | null = cachedContext?.enrichment_metadata ?? null;
 
   if (!triggeredGate) {
-    // Collect FILE and DIALOGUE artifact IDs from case artifacts
-    const allArtifacts = caseDetails ? (caseDetails.artifacts as unknown[]) : [];
-    const fileArtifacts = allArtifacts.filter((a) => {
-      if (typeof a === 'object' && a !== null && 'artifact_type' in a) {
-        return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'FILE';
-      }
-      return false;
-    });
-    const dialogueArtifactIds = allArtifacts
-      .filter((a) => {
+    // If we have cached context, reuse enrichment data; otherwise fetch fresh
+    let customerDialogueMessages: DialogueMessage[] = cachedContext?.dialogue_messages ?? [];
+    let parsedFileDescriptions: string[] = cachedContext?.file_parse_results ?? [];
+
+    if (!cachedContext) {
+      // Collect FILE and DIALOGUE artifact IDs from case artifacts
+      const allArtifacts = caseDetails ? ((caseDetails as { artifacts: unknown[] }).artifacts as unknown[]) : [];
+      const fileArtifacts = allArtifacts.filter((a) => {
         if (typeof a === 'object' && a !== null && 'artifact_type' in a) {
-          return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'DIALOGUE';
+          return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'FILE';
         }
         return false;
-      })
-      .map((a) => {
-        const art = a as { id?: number; artifact_id?: string };
-        return art.artifact_id ?? String(art.id);
       });
+      const dialogueArtifactIds = allArtifacts
+        .filter((a) => {
+          if (typeof a === 'object' && a !== null && 'artifact_type' in a) {
+            return (a as { artifact_type: string }).artifact_type?.toUpperCase() === 'DIALOGUE';
+          }
+          return false;
+        })
+        .map((a) => {
+          const art = a as { id?: number; artifact_id?: string };
+          return art.artifact_id ?? String(art.id);
+        });
 
-    // Run dialogue and file enrichments in parallel
-    const [dialoguesFetchResult, parsedFileDescriptions] = await Promise.all([
-      fetchCaseDialogues(dialogueArtifactIds),
-      fetchAndParseFileArtifacts(fileArtifacts),
-    ]);
-    const allCustomerMessages = filterCustomerMessages(dialoguesFetchResult.messages);
-    // Sort by time so the most recent messages are at the end, then take last N
-    allCustomerMessages.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    const customerDialogueMessages = allCustomerMessages.slice(-MAX_DIALOGUE_MESSAGES);
+      // Run dialogue and file enrichments in parallel
+      const [dialoguesFetchResult, parsedFiles] = await Promise.all([
+        fetchCaseDialogues(dialogueArtifactIds),
+        fetchAndParseFileArtifacts(fileArtifacts),
+      ]);
+      const allCustomerMessages = filterCustomerMessages(dialoguesFetchResult.messages);
+      allCustomerMessages.sort((a, b) => a.created_at.localeCompare(b.created_at));
+      customerDialogueMessages = allCustomerMessages.slice(-MAX_DIALOGUE_MESSAGES);
+      parsedFileDescriptions = parsedFiles;
 
-    console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialoguesFetchResult.messages.length} (customer: ${allCustomerMessages.length}, sent to planner: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);
+      console.log(`[Pipeline] Enrichment results — case_actions: ${caseActions.length}, dialogue_messages: ${dialoguesFetchResult.messages.length} (customer: ${allCustomerMessages.length}, sent to planner: ${customerDialogueMessages.length}), file_descriptions: ${parsedFileDescriptions.length}`);
 
-    // Capture enrichment data for DB storage
-    fileParseResults = parsedFileDescriptions.length > 0 ? parsedFileDescriptions : null;
-    dialogueMessages = customerDialogueMessages.length > 0 ? customerDialogueMessages : null;
-    enrichmentMetadata = {
-      ...dialoguesFetchResult.metadata,
-      total_messages_fetched: dialoguesFetchResult.messages.length,
-      customer_messages_filtered: allCustomerMessages.length,
-      customer_messages_sent_to_planner: customerDialogueMessages.length,
-      file_artifacts_found: fileArtifacts.length,
-      file_descriptions_parsed: parsedFileDescriptions.length,
-    };
+      fileParseResults = parsedFileDescriptions.length > 0 ? parsedFileDescriptions : null;
+      dialogueMessages = customerDialogueMessages.length > 0 ? customerDialogueMessages : null;
+      enrichmentMetadata = {
+        ...dialoguesFetchResult.metadata,
+        total_messages_fetched: dialoguesFetchResult.messages.length,
+        customer_messages_filtered: allCustomerMessages.length,
+        customer_messages_sent_to_planner: customerDialogueMessages.length,
+        file_artifacts_found: fileArtifacts.length,
+        file_descriptions_parsed: parsedFileDescriptions.length,
+      };
+    }
 
     // Layer 2: Planner
+    const detailsForPlanner = caseDetails && typeof caseDetails === 'object' && 'artifacts' in caseDetails
+      ? { artifacts: (caseDetails as { artifacts: unknown[] }).artifacts }
+      : null;
     try {
       const result = await callPlanner(
         profile,
         rawSignals,
-        caseDetails ? { artifacts: caseDetails.artifacts as unknown[] } : null,
+        detailsForPlanner,
         { caseActions, customerDialogueMessages, parsedFileDescriptions },
         runConfig ? { model: runConfig.model, promptVersion: runConfig.prompt_version } : undefined,
       );
@@ -535,7 +625,6 @@ export async function runDisputePipeline(
       // Parse error fallback — escalate, don't throw
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Planner error for case ${caseId}:`, errorMessage);
-      // Capture raw LLM response even on parse/validation failure (log length only to avoid PII)
       if (err && typeof err === 'object' && 'rawResponse' in err) {
         const raw = (err as { rawResponse: string }).rawResponse;
         console.error(`Planner raw LLM response for case ${caseId}: [${raw.length} chars, not logged due to potential PII]`);
@@ -553,15 +642,17 @@ export async function runDisputePipeline(
   const duration = Date.now() - start;
 
   // Layer 4: Audit — save to DB
-  const filteredDetails = caseDetails
-    ? {
-        id: caseDetails.id,
-        ref_id: caseDetails.ref_id,
-        alias: caseDetails.alias,
-        issue_type_id: caseDetails.issue_type_id,
-        artifacts: filterCaseArtifacts(caseDetails.artifacts as unknown[]),
-      }
-    : null;
+  const filteredDetails = cachedContext
+    ? caseDetails
+    : caseDetails
+      ? {
+          id: (caseDetails as { id: unknown }).id,
+          ref_id: (caseDetails as { ref_id: unknown }).ref_id,
+          alias: (caseDetails as { alias: unknown }).alias,
+          issue_type_id: (caseDetails as { issue_type_id: unknown }).issue_type_id,
+          artifacts: filterCaseArtifacts((caseDetails as { artifacts: unknown[] }).artifacts),
+        }
+      : null;
 
   const row = await insertPipelineRun({
     case_id: caseId,

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Summary
 
-Monorepo with three experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis), a **Rubric Tester** (dispute pipeline evaluation), and a **Dataset Builder** (ground-truth eval dataset construction with labeling). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
+Monorepo with three experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis), a **Rubric Tester** (dispute pipeline evaluation), and a **Dataset Builder** (ground-truth eval dataset construction with labeling and stratified analytics). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
 
 ## Commands
 
@@ -39,13 +39,14 @@ No test framework is configured.
 - `src/app.ts` — Fastify app factory, registers CORS and routes
 - `src/routes/` — Route handlers for timeline-analyzer, dispute-pipeline, dataset, health
 - `src/services/` — Core business logic:
-  - `dispute-pipeline.ts` — 5-layer pipeline (signals → hard gates → planner → executor → verifier)
+  - `dispute-pipeline.ts` — 5-layer pipeline (signals → hard gates → planner → executor → verifier) + `fetchCaseContext()` for dataset context-only fetching
   - `case-api.ts` — External API client (case details, artifacts, actions, dialogues)
   - `bigquery.ts` — BigQuery client for analytical signal queries
   - `signals-query.ts` — Signal-fetching SQL queries
   - `llm-api.ts` — LLM proxy integration (Anthropic/OpenAI/Gemini)
   - `db.ts` — PostgreSQL connection pool, CRUD operations, auto-migrations
   - `dataset-segments.ts` — Custom SQL execution for dataset building (BigQuery)
+  - `dataset-analytics.ts` — Stratified analytics computation (confusion matrix, agreement metrics, auto-tags)
   - `prompts.ts` — Loads prompt templates from `src/prompts/*.md`
 - `src/prompts/` — Markdown prompt files for LLM calls
 - `src/types/` — Zod schemas and TypeScript types
@@ -53,7 +54,7 @@ No test framework is configured.
 ### Frontend (`packages/frontend`) — React 18, Vite 6, Tailwind CSS
 
 - `src/pages/` — Four main pages: `TimelineAnalyzer.tsx`, `RubricTester.tsx`, `DatasetBuilder.tsx`, `DatasetDetail.tsx`
-- `src/components/` — UI components organized by feature (`timeline-analyzer/`, `rubric-tester/`, `charts/`, `ui/`, `layout/`)
+- `src/components/` — UI components organized by feature (`timeline-analyzer/`, `rubric-tester/`, `dataset-builder/`, `charts/`, `ui/`, `layout/`)
 - `src/hooks/` — React Query hooks for API calls
 - `src/lib/` — Utility functions (xlsx export, cn helper)
 - Vite proxies `/api` requests to backend on port 3003
@@ -68,10 +69,22 @@ The core domain logic in `dispute-pipeline.ts`:
 4. **Layer 3** — Executor: submits TaskCreationRequest or escalation
 5. **Layer 4** — Verifier: audit log
 
+### Dataset Builder Architecture
+
+Datasets are **pure ground truth** — case IDs + raw context data + human labels. No LLM pipeline runs on creation.
+
+- **Dataset creation**: Fetches context only (BigQuery signals + case details + artifacts via Gemini + dialogue). No LLM planner call.
+- **Dataset tab** (renamed from "Labels"): Shows raw signals and case context for unbiased labeling. No risk badges, no pipeline decisions.
+- **Runs**: Each run executes the full pipeline (profile + gates + planner) with a specific model/prompt/rubric config, using cached context from the dataset (no re-fetching from APIs).
+- **Analytics**: Requires a run selection. Computes confusion matrix, stratified metrics by risk/dispute type/hard gate/rubric bucket, inter-annotator agreement.
+- **Refresh**: POST `/:id/refresh` re-fetches context for all cases if underlying data changed.
+
 ### Database
 
 - PostgreSQL 16 (Docker Compose, port 5433, user/pass/db: `analytics`)
-- Tables: `analysis_jobs`, `dispute_pipeline_runs`, `datasets`, `dataset_cases`, `dataset_runs`, `dataset_run_cases`
+- Tables: `analysis_jobs`, `dispute_pipeline_runs`, `datasets`, `dataset_cases`, `dataset_runs`, `dataset_run_cases`, `dataset_compositions`
+- `datasets` has `status` column ('loading' | 'ready') tracking context fetch progress
+- `dataset_cases` stores raw context (raw_signals, case_details, case_actions, dialogue_messages, file_parse_results, enrichment_metadata, context_fetched_at) + human labels
 - Migrations in `init-db/` (SQL files) + runtime auto-migrations in `db.ts`
 - External volume: `anna-ws-analytics_pgdata`
 

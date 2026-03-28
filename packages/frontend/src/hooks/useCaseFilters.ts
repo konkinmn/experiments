@@ -4,7 +4,8 @@ import type { DatasetCase } from '@/types';
 export type LabelFilter = 'all' | 'credit' | 'escalate' | 'undecided' | 'unlabeled';
 export type RiskFilter = 'all' | 'green' | 'amber' | 'red';
 export type HardGateFilter = 'all' | 'hit' | 'clear';
-export type SortOption = 'default' | 'risk' | 'rubric';
+export type SortOption = 'default' | 'risk' | 'rubric' | 'amount' | 'account_age';
+export type FilterMode = 'dataset' | 'run';
 
 export interface CaseFilterState {
   labelFilter: LabelFilter;
@@ -18,11 +19,12 @@ export interface CaseFilterState {
   filteredCases: DatasetCase[];
   totalCount: number;
   filteredCount: number;
+  mode: FilterMode;
 }
 
 const RISK_ORDER: Record<string, number> = { red: 0, amber: 1, green: 2 };
 
-export function useCaseFilters(cases: DatasetCase[]): CaseFilterState {
+export function useCaseFilters(cases: DatasetCase[], mode: FilterMode = 'run'): CaseFilterState {
   const [labelFilter, setLabelFilter] = useState<LabelFilter>('all');
   const [riskFilter, setRiskFilter] = useState<RiskFilter>('all');
   const [hardGateFilter, setHardGateFilter] = useState<HardGateFilter>('all');
@@ -37,18 +39,21 @@ export function useCaseFilters(cases: DatasetCase[]): CaseFilterState {
       );
     }
 
-    if (riskFilter !== 'all') {
-      result = result.filter(
-        (c) => c.pipelineRun?.disputeProfile.risk_level === riskFilter,
-      );
-    }
+    // Risk and hard gate filters only apply in run mode (pipeline data required)
+    if (mode === 'run') {
+      if (riskFilter !== 'all') {
+        result = result.filter(
+          (c) => c.pipelineRun?.disputeProfile.risk_level === riskFilter,
+        );
+      }
 
-    if (hardGateFilter !== 'all') {
-      result = result.filter((c) => {
-        if (!c.pipelineRun) return false;
-        const hit = c.pipelineRun.hardGateTriggered != null;
-        return hardGateFilter === 'hit' ? hit : !hit;
-      });
+      if (hardGateFilter !== 'all') {
+        result = result.filter((c) => {
+          if (!c.pipelineRun) return false;
+          const hit = c.pipelineRun.hardGateTriggered != null;
+          return hardGateFilter === 'hit' ? hit : !hit;
+        });
+      }
     }
 
     if (sortOption === 'risk') {
@@ -63,10 +68,22 @@ export function useCaseFilters(cases: DatasetCase[]): CaseFilterState {
         const bScore = b.pipelineRun?.disputeProfile.rubric_score ?? -1;
         return bScore - aScore || a.caseId - b.caseId;
       });
+    } else if (sortOption === 'amount') {
+      result = [...result].sort((a, b) => {
+        const aAmt = a.rawSignals?.total_amount ?? a.pipelineRun?.rawSignals?.total_amount ?? 0;
+        const bAmt = b.rawSignals?.total_amount ?? b.pipelineRun?.rawSignals?.total_amount ?? 0;
+        return bAmt - aAmt || a.caseId - b.caseId;
+      });
+    } else if (sortOption === 'account_age') {
+      result = [...result].sort((a, b) => {
+        const aAge = a.rawSignals?.account_age_days ?? a.pipelineRun?.rawSignals?.account_age_days ?? 0;
+        const bAge = b.rawSignals?.account_age_days ?? b.pipelineRun?.rawSignals?.account_age_days ?? 0;
+        return aAge - bAge || a.caseId - b.caseId;
+      });
     }
 
     return result;
-  }, [cases, labelFilter, riskFilter, hardGateFilter, sortOption]);
+  }, [cases, labelFilter, riskFilter, hardGateFilter, sortOption, mode]);
 
   return {
     labelFilter, setLabelFilter,
@@ -76,5 +93,6 @@ export function useCaseFilters(cases: DatasetCase[]): CaseFilterState {
     filteredCases,
     totalCount: cases.length,
     filteredCount: filteredCases.length,
+    mode,
   };
 }

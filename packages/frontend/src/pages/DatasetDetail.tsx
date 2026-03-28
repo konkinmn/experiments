@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Download, Trash2, Loader2, Plus } from 'lucide-react';
+import { ArrowLeft, Download, Trash2, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import {
   useDatasetRunCases,
   useTagCase,
   useLabelDatasetCase2,
+  useRefreshDataset,
 } from '@/hooks/useDatasetBuilder';
 import { downloadXlsx, type ColumnDef } from '@/lib/download-xlsx';
 import type { DatasetCase, DatasetLabel, DatasetRun } from '@/types';
@@ -26,21 +27,19 @@ type ExportRow = DatasetCase & { datasetName: string };
 const EXPORT_COLUMNS: ColumnDef<ExportRow>[] = [
   { header: 'Case ID', accessor: (r) => r.caseId },
   { header: 'Dataset', accessor: (r) => r.datasetName },
-  { header: 'Decision', accessor: (r) => r.pipelineRun?.plannerOutput?.decision ?? (r.pipelineRun?.hardGateTriggered ? 'hard_gate' : '') },
   { header: 'Label', accessor: (r) => r.label ?? '' },
   { header: 'Label Notes', accessor: (r) => r.labelNotes ?? '' },
   { header: 'Labeled By', accessor: (r) => r.labeledBy ?? '' },
-  { header: 'Risk Level', accessor: (r) => r.pipelineRun?.disputeProfile.risk_level ?? '' },
-  { header: 'Rubric Score', accessor: (r) => r.pipelineRun?.disputeProfile.rubric_score ?? '' },
-  { header: 'Total Amount', accessor: (r) => r.pipelineRun?.rawSignals.total_amount ?? '' },
-  { header: 'Max Txn Amount', accessor: (r) => r.pipelineRun?.rawSignals.max_transaction_amount ?? '' },
-  { header: 'Account Age (days)', accessor: (r) => r.pipelineRun?.rawSignals.account_age_days ?? '' },
-  { header: 'CIFAS Count', accessor: (r) => r.pipelineRun?.rawSignals.cifas_count ?? '' },
-  { header: 'Scammer Count', accessor: (r) => r.pipelineRun?.rawSignals.scammer_count ?? '' },
-  { header: 'Hard Gate', accessor: (r) => r.pipelineRun?.hardGateTriggered ?? '' },
-  { header: 'Thought', accessor: (r) => r.pipelineRun?.plannerOutput?.thought ?? '' },
-  { header: 'Uncertainty Factors', accessor: (r) => r.pipelineRun?.plannerOutput?.uncertainty_factors?.join('; ') ?? '' },
-  { header: 'Duration (ms)', accessor: (r) => r.pipelineRun?.pipelineDurationMs ?? '' },
+  { header: 'Label Confidence', accessor: (r) => r.labelConfidence ?? '' },
+  { header: 'Total Amount', accessor: (r) => r.rawSignals?.total_amount ?? '' },
+  { header: 'Max Txn Amount', accessor: (r) => r.rawSignals?.max_transaction_amount ?? '' },
+  { header: 'Account Age (days)', accessor: (r) => r.rawSignals?.account_age_days ?? '' },
+  { header: 'CIFAS Count', accessor: (r) => r.rawSignals?.cifas_count ?? '' },
+  { header: 'Trust Score', accessor: (r) => r.rawSignals?.trust_score ?? '' },
+  { header: 'Scammer Count', accessor: (r) => r.rawSignals?.scammer_count ?? '' },
+  { header: 'Merchants', accessor: (r) => r.rawSignals?.merchants ?? '' },
+  { header: 'Account Status', accessor: (r) => r.rawSignals?.account_status ?? '' },
+  { header: 'Tier', accessor: (r) => r.rawSignals?.tier_name ?? '' },
 ];
 
 type ActiveTab = 'labels' | 'analytics' | 'compare' | `run-${number}`;
@@ -57,6 +56,7 @@ export function DatasetDetail() {
   const deleteDataset = useDeleteDataset();
   const tagCase = useTagCase();
   const labelCase2 = useLabelDatasetCase2();
+  const refreshDataset = useRefreshDataset();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('labels');
   const [showNewRunModal, setShowNewRunModal] = useState(false);
@@ -124,7 +124,10 @@ export function DatasetDetail() {
     );
   }
 
-  const hasLoadingCases = dataset.cases.some((c) => c.pipelineRunId === null && !c.pipelineError);
+  const hasLoadingCases = dataset.cases.some((c) =>
+    (c.contextFetchedAt === null && !c.contextError) ||
+    (c.pipelineRunId === null && !c.pipelineError && !c.contextFetchedAt)
+  );
   const activeRunId = activeTab.startsWith('run-') ? parseInt(activeTab.slice(4), 10) : null;
   const activeRun = activeRunId != null ? runs?.find((r) => r.id === activeRunId) : null;
 
@@ -153,6 +156,14 @@ export function DatasetDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => refreshDataset.mutate(datasetId)}
+              disabled={refreshDataset.isPending}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${refreshDataset.isPending ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
             {dataset.cases.length > 0 && (
               <Button variant="outline" onClick={handleExport}>
                 <Download className="h-4 w-4 mr-2" />
@@ -183,7 +194,7 @@ export function DatasetDetail() {
           }`}
           onClick={() => setActiveTab('labels')}
         >
-          Labels
+          Dataset
         </button>
         <button
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
@@ -284,7 +295,7 @@ function LabelsTab({
   onTagCase: (datasetCaseId: number, tags: string[]) => void;
   onLabel2: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
 }) {
-  const filters = useCaseFilters(dataset.cases);
+  const filters = useCaseFilters(dataset.cases, 'dataset');
 
   return (
     <div className="space-y-6">
@@ -329,6 +340,7 @@ function LabelsTab({
           onSortChange={filters.setSortOption}
           totalCount={filters.totalCount}
           filteredCount={filters.filteredCount}
+          mode="dataset"
         />
       )}
 
@@ -363,6 +375,16 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
       id: rc.id,
       datasetId,
       caseId: rc.caseId,
+      // Context fields (not available in run cases — use null)
+      rawSignals: null,
+      caseDetails: null,
+      caseActions: null,
+      dialogueMessages: null,
+      fileParseResults: null,
+      enrichmentMetadata: null,
+      contextError: null,
+      contextFetchedAt: null,
+      // Legacy pipeline fields
       pipelineRunId: rc.pipelineRunId,
       pipelineError: rc.pipelineError,
       pipelineRun: rc.pipelineRun,

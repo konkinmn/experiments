@@ -231,6 +231,7 @@ export interface DatasetRow {
   description: string | null;
   source_type: DatasetSourceType;
   source_config: Record<string, unknown>;
+  status: 'loading' | 'ready';
   created_at: string;
 }
 
@@ -239,12 +240,31 @@ export interface DatasetWithCounts extends DatasetRow {
   labeled_cases: number;
 }
 
+export interface CaseContext {
+  raw_signals: CaseSignalsRaw;
+  case_details: unknown | null;
+  case_actions: CaseAction[] | null;
+  dialogue_messages: DialogueMessage[] | null;
+  file_parse_results: string[] | null;
+  enrichment_metadata: Record<string, unknown> | null;
+}
+
 export interface DatasetCaseRow {
   id: number;
   dataset_id: number;
   case_id: number;
   pipeline_run_id: number | null;
   pipeline_error: string | null;
+  // Context data (new architecture)
+  raw_signals: CaseSignalsRaw | null;
+  case_details: unknown | null;
+  case_actions: CaseAction[] | null;
+  dialogue_messages: DialogueMessage[] | null;
+  file_parse_results: string[] | null;
+  enrichment_metadata: Record<string, unknown> | null;
+  context_error: string | null;
+  context_fetched_at: string | null;
+  // Labels
   label: DatasetLabel | null;
   label_notes: string | null;
   labeled_by: string | null;

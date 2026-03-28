@@ -110,6 +110,11 @@ export const api = {
       method: 'DELETE',
     }),
 
+  refreshDataset: (datasetId: number) =>
+    fetchApi<{ success: boolean; refreshing: number }>(`/api/datasets/${datasetId}/refresh`, {
+      method: 'POST',
+    }),
+
   labelDatasetCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) =>
     fetchApi<DatasetCase>(`/api/datasets/cases/${id}/label`, {
       method: 'PATCH',

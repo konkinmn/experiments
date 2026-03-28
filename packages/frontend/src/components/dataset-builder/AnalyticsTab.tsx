@@ -13,8 +13,14 @@ interface Props {
 }
 
 export function AnalyticsTab({ datasetId, runs }: Props) {
+  const firstRunId = runs?.[0]?.id;
   const [selectedRunId, setSelectedRunId] = useState<number | undefined>(undefined);
-  const { data: analytics, isLoading } = useDatasetAnalytics(datasetId, selectedRunId, { enabled: true });
+  const activeRunId = selectedRunId ?? firstRunId;
+  const { data: analytics, isLoading } = useDatasetAnalytics(datasetId, activeRunId, { enabled: !!activeRunId });
+
+  if (!runs?.length) {
+    return <p className="text-sm text-gray-500 py-4">Create a run to view analytics.</p>;
+  }
 
   if (isLoading) {
     return (
@@ -25,7 +31,7 @@ export function AnalyticsTab({ datasetId, runs }: Props) {
   }
 
   if (!analytics) {
-    return <p className="text-sm text-gray-500 py-4">No analytics data available. Label some cases first.</p>;
+    return <p className="text-sm text-gray-500 py-4">No analytics data available. Label some cases and create a run first.</p>;
   }
 
   const { overall } = analytics;
@@ -34,13 +40,12 @@ export function AnalyticsTab({ datasetId, runs }: Props) {
     <div className="space-y-6">
       {/* Run selector */}
       <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-gray-700">Source:</label>
+        <label className="text-sm font-medium text-gray-700">Run:</label>
         <select
           className="text-sm border border-gray-300 rounded-md px-3 py-1.5 bg-white"
-          value={selectedRunId ?? ''}
+          value={activeRunId ?? ''}
           onChange={(e) => setSelectedRunId(e.target.value ? parseInt(e.target.value, 10) : undefined)}
         >
-          <option value="">Baseline (Labels tab)</option>
           {runs?.map((run) => (
             <option key={run.id} value={run.id}>
               {run.name} ({run.config.model})

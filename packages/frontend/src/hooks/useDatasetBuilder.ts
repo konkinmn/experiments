@@ -43,9 +43,23 @@ export function useDataset(id: number, options?: { enabled?: boolean }) {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return false;
-      // Keep polling only if cases are still pending (no run ID and no error)
-      const hasPending = data.cases?.some((c) => c.pipelineRunId === null && !c.pipelineError);
+      // Keep polling while context is still being fetched
+      const hasPending = data.cases?.some((c) =>
+        c.contextFetchedAt === null && !c.contextError &&
+        // Legacy: also poll old datasets still running pipeline
+        c.pipelineRunId === null && !c.pipelineError
+      );
       return hasPending ? 3000 : false;
+    },
+  });
+}
+
+export function useRefreshDataset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (datasetId: number) => api.refreshDataset(datasetId),
+    onSuccess: (_data, datasetId) => {
+      queryClient.invalidateQueries({ queryKey: ['dataset', datasetId] });
     },
   });
 }

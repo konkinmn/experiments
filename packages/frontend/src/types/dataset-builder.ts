@@ -1,4 +1,4 @@
-import type { PipelineResult } from './rubric-tester';
+import type { PipelineResult, CaseSignalsRaw } from './rubric-tester';
 
 export type DatasetLabel = 'credit' | 'escalate' | 'undecided';
 export type LabelConfidence = 'high' | 'medium' | 'low';
@@ -11,6 +11,7 @@ export interface Dataset {
   description: string | null;
   sourceType: DatasetSourceType;
   sourceConfig: Record<string, unknown>;
+  status?: 'loading' | 'ready';
   totalCases: number;
   labeledCases: number;
   createdAt: string;
@@ -24,9 +25,20 @@ export interface DatasetCase {
   id: number;
   datasetId: number;
   caseId: number;
+  // Context data (new architecture)
+  rawSignals: CaseSignalsRaw | null;
+  caseDetails: Record<string, unknown> | null;
+  caseActions: Array<{ action_type: string; status: string; created_at: string; metadata: Record<string, unknown> }> | null;
+  dialogueMessages: Array<{ role: string; content: string; created_at: string }> | null;
+  fileParseResults: string[] | null;
+  enrichmentMetadata: Record<string, unknown> | null;
+  contextError: string | null;
+  contextFetchedAt: string | null;
+  // Legacy fields
   pipelineRunId: number | null;
   pipelineError: string | null;
   pipelineRun: PipelineResult | null;
+  // Labels
   label: DatasetLabel | null;
   labelNotes: string | null;
   labeledBy: string | null;

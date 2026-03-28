@@ -1,5 +1,7 @@
 # Dataset Builder Rethink — Specification
 
+> **Status (2026-03-27):** Phases 1–5 from this spec are implemented. Additionally, the architecture was rethought: **datasets no longer run the LLM pipeline on creation**. Datasets now store raw context (signals, case details, artifacts, dialogue) for unbiased labeling. All pipeline evaluation happens in Runs. The "Labels" tab was renamed to "Dataset". Analytics requires a run selection (no baseline). See CLAUDE.md for current architecture.
+
 ## Problem
 
 The current Dataset Builder answers one question: "Does the pipeline agree with a human on a batch of cases?" It produces three numbers per run: agreement rate, credit precision, and escalate recall. This is not enough to prove the LLM auto-credit pipeline is safe to deploy.
@@ -65,7 +67,7 @@ Populated automatically when a pipeline run completes for a dataset case. Derive
 
 Computes analytics on-the-fly via SQL aggregation.
 
-- When `runId` omitted: uses baseline pipeline runs from the Labels tab
+- ~~When `runId` omitted: uses baseline pipeline runs from the Labels tab~~ (Removed — baseline no longer exists. `runId` is now required.)
 - When `runId` provided: uses pipeline runs from that specific named run
 
 **Response:**
@@ -152,46 +154,18 @@ Appears between "Labels" and the first run tab. Contains:
 
 ### Auto-tag Derivation
 
-New service function in `packages/backend/src/services/dataset-analytics.ts`:
+> **Updated:** Auto-tags are no longer stored on `dataset_cases`. They are computed dynamically at query time from the pipeline run data using `jsonb_build_object()` in the analytics SQL. This avoids stale data and schema churn.
 
-```typescript
-function deriveAutoTags(pipelineRun: PipelineRunRow): Record<string, string | boolean> {
-  const score = pipelineRun.dispute_profile.rubric_score;
-  return {
-    risk_level: pipelineRun.dispute_profile.risk_level,
-    amount_bucket: 'under_25',  // all cases are sub-£25
-    rubric_score_bucket: score >= 70 ? '70-108' : score >= 40 ? '40-69' : '0-39',
-    hard_gate_hit: !!pipelineRun.hard_gate_triggered,
-    dispute_type: pipelineRun.planner_output?.args?.fraud_type ?? 'unknown',
-    dispute_sub_type: pipelineRun.planner_output?.args?.fraud_sub_type ?? 'unknown',
-    has_uncertainty: (pipelineRun.planner_output?.uncertainty_factors?.length ?? 0) > 0,
-    merchant: pipelineRun.raw_signals.merchants,
-  };
-}
-```
+Tags computed inline during analytics queries:
+- `risk_level` — from `dispute_profile->>'risk_level'`
+- `hard_gate_hit` — from `hard_gate_triggered IS NOT NULL`
+- `rubric_score_bucket` — from `dispute_profile->>'rubric_score'` (0-39 / 40-69 / 70-108)
+- `amount_bucket` — from `raw_signals->>'total_amount'` (under_25 / 25_to_100 / over_100)
+- `dispute_type` — from `planner_output->'args'->>'reason'`
 
-Called automatically:
-1. When a pipeline run completes for a dataset case (in existing POST `/api/datasets` background handler)
-2. When a run's pipeline completes (in existing POST `/api/datasets/:id/runs` background handler)
 ### Analytics SQL Strategy
 
-All analytics computed on-the-fly. With max 500 cases per dataset, performance is trivial. The query joins `dataset_cases` (or `dataset_run_cases`) with `dispute_pipeline_runs` and aggregates using CASE expressions, grouped by tag dimensions.
-
-For baseline analytics:
-```sql
-SELECT
-  dc.auto_tags->>'risk_level' as segment,
-  COUNT(*) as sample_size,
-  COUNT(CASE WHEN dc.label = 'credit' AND pr.planner_output->>'decision' = 'credit' THEN 1 END) as true_credit,
-  COUNT(CASE WHEN dc.label = 'escalate' AND pr.planner_output->>'decision' = 'credit' THEN 1 END) as false_credit,
-  -- ... etc
-FROM dataset_cases dc
-JOIN dispute_pipeline_runs pr ON pr.id = dc.pipeline_run_id
-WHERE dc.dataset_id = $1 AND dc.label IS NOT NULL AND dc.label != 'undecided'
-GROUP BY dc.auto_tags->>'risk_level'
-```
-
-For run analytics: same pattern but joining through `dataset_run_cases` instead.
+All analytics computed on-the-fly via the `GET /api/datasets/:id/analytics?runId=N` endpoint (runId required). The query joins `dataset_run_cases` → `dataset_cases` (for human labels) → `dispute_pipeline_runs` (for pipeline decisions), builds auto_tags dynamically via `jsonb_build_object()`, then aggregates using CASE expressions in application code.
 
 ---
 

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { runCustomSql } from '../services/dataset-segments.js';
-import { runDisputePipeline } from '../services/dispute-pipeline.js';
+import { runDisputePipeline, fetchCaseContext } from '../services/dispute-pipeline.js';
 import {
   insertDatasetWithCases,
   listDatasets,
@@ -9,8 +9,6 @@ import {
   deleteDataset,
   listDatasetCases,
   updateDatasetCaseLabel,
-  updateDatasetCasePipelineRun,
-  updateDatasetCasePipelineError,
   deleteDatasetCase,
   datasetCaseExists,
   getPipelineRunsByIds,
@@ -22,18 +20,21 @@ import {
   listDatasetRuns,
   getDatasetRunCases,
   updateDatasetRunCaseLabel,
-  updateDatasetCaseAutoTags,
   updateDatasetCaseTags,
   getDatasetAnalytics,
   getComparisonData,
   updateDatasetCaseLabel2,
   composeDatasets,
+  updateDatasetCaseContext,
+  updateDatasetCaseContextError,
+  updateDatasetStatus,
+  getDatasetCaseContexts,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
-import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig } from '../types/dispute-pipeline.js';
+import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig, CaseContext, CaseSignalsRaw, CaseAction, DialogueMessage } from '../types/dispute-pipeline.js';
 import { DEFAULT_RUBRIC_WEIGHTS } from '../services/dispute-pipeline.js';
 import { listPrompts } from '../services/prompts.js';
-import { deriveAutoTags, computeFullAnalytics, computeRunComparison } from '../services/dataset-analytics.js';
+import { computeFullAnalytics, computeRunComparison } from '../services/dataset-analytics.js';
 
 const CreateDatasetSchema = z.object({
   name: z.string().min(1),
@@ -58,20 +59,31 @@ function formatDataset(d: DatasetRow & { total_cases?: number; labeled_cases?: n
     description: d.description,
     sourceType: d.source_type,
     sourceConfig: d.source_config,
+    status: d.status ?? 'ready',
     createdAt: d.created_at,
     ...(d.total_cases !== undefined ? { totalCases: d.total_cases } : {}),
     ...(d.labeled_cases !== undefined ? { labeledCases: d.labeled_cases } : {}),
   };
 }
 
-function formatDatasetCase(row: DatasetCaseRow, pipelineRun: PipelineRunRow | null) {
+function formatDatasetCase(row: DatasetCaseRow) {
   return {
     id: row.id,
     datasetId: row.dataset_id,
     caseId: row.case_id,
+    // Context data
+    rawSignals: row.raw_signals ?? null,
+    caseDetails: row.case_details ?? null,
+    caseActions: row.case_actions ?? null,
+    dialogueMessages: row.dialogue_messages ?? null,
+    fileParseResults: row.file_parse_results ?? null,
+    enrichmentMetadata: row.enrichment_metadata ?? null,
+    contextError: row.context_error ?? null,
+    contextFetchedAt: row.context_fetched_at ?? null,
+    // Legacy fields
     pipelineRunId: row.pipeline_run_id,
     pipelineError: row.pipeline_error,
-    pipelineRun: pipelineRun ? formatPipelineRun(pipelineRun) : null,
+    // Labels
     label: row.label,
     labelNotes: row.label_notes,
     labeledBy: row.labeled_by,
@@ -189,33 +201,33 @@ export async function datasetRoutes(app: FastifyInstance) {
         caseIds,
       );
 
-      // Run pipelines in background with concurrency limit of 3
+      // Fetch context for each case in background (no LLM pipeline)
+      await updateDatasetStatus(dataset.id, 'loading');
+
       const tasks = datasetCases.map((dc) => async () => {
         try {
-          // Skip if dataset case was deleted while queued
           const exists = await datasetCaseExists(dc.id);
           if (!exists) return;
 
-          const pipelineRun = await runDisputePipeline(dc.case_id);
-          await updateDatasetCasePipelineRun(dc.id, pipelineRun.id);
-          // Derive auto-tags from pipeline output
-          const autoTags = deriveAutoTags(pipelineRun);
-          await updateDatasetCaseAutoTags(dc.id, autoTags);
+          const context = await fetchCaseContext(dc.case_id);
+          await updateDatasetCaseContext(dc.id, context);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           app.log.error(
             { caseId: dc.case_id, datasetId: dataset.id, error },
-            'Pipeline run failed for dataset case',
+            'Context fetch failed for dataset case',
           );
-          // Mark the case as failed so frontend stops polling
-          await updateDatasetCasePipelineError(dc.id, message).catch(() => {});
+          await updateDatasetCaseContextError(dc.id, message).catch(() => {});
         }
       });
 
       // Fire and forget — frontend polls for completion
-      runWithConcurrency(tasks, 3).catch((error) => {
-        app.log.error({ datasetId: dataset.id, error }, 'Background pipeline batch failed');
-      });
+      runWithConcurrency(tasks, 3)
+        .then(() => updateDatasetStatus(dataset.id, 'ready'))
+        .catch((error) => {
+          app.log.error({ datasetId: dataset.id, error }, 'Background context fetch batch failed');
+          updateDatasetStatus(dataset.id, 'ready').catch(() => {});
+        });
 
       return reply.status(201).send({
         ...formatDataset(dataset),
@@ -231,7 +243,7 @@ export async function datasetRoutes(app: FastifyInstance) {
     }
   });
 
-  // GET /:id — Get dataset with all cases and pipeline run data
+  // GET /:id — Get dataset with all cases and context data
   app.get<{ Params: { id: string } }>('/:id', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) {
@@ -245,14 +257,33 @@ export async function datasetRoutes(app: FastifyInstance) {
 
     const cases = await listDatasetCases(id);
 
-    // Fetch pipeline runs for all cases that have one
-    const runIds = cases.map((c) => c.pipeline_run_id).filter((rid): rid is number => rid !== null);
-    const pipelineRuns = await getPipelineRunsByIds(runIds);
-    const runMap = new Map(pipelineRuns.map((r) => [r.id, r]));
+    // For backward compat: if a case has pipeline_run_id but no raw_signals,
+    // populate context from the linked pipeline run
+    const legacyCaseIds = cases
+      .filter((c) => c.pipeline_run_id !== null && c.raw_signals === null)
+      .map((c) => c.pipeline_run_id!);
+    let legacyRunMap = new Map<number, PipelineRunRow>();
+    if (legacyCaseIds.length > 0) {
+      const runs = await getPipelineRunsByIds(legacyCaseIds);
+      legacyRunMap = new Map(runs.map((r) => [r.id, r]));
+    }
 
     const formattedCases = cases.map((c) => {
-      const pipelineRun = c.pipeline_run_id ? (runMap.get(c.pipeline_run_id) ?? null) : null;
-      return formatDatasetCase(c, pipelineRun);
+      const formatted = formatDatasetCase(c);
+      // Backfill context from legacy pipeline run
+      if (!formatted.rawSignals && c.pipeline_run_id) {
+        const run = legacyRunMap.get(c.pipeline_run_id);
+        if (run) {
+          formatted.rawSignals = run.raw_signals;
+          formatted.caseDetails = run.case_details as Record<string, unknown> | null;
+          formatted.caseActions = run.case_actions;
+          formatted.dialogueMessages = run.dialogue_messages;
+          formatted.fileParseResults = run.file_parse_results;
+          formatted.enrichmentMetadata = run.enrichment_metadata;
+          formatted.contextFetchedAt = run.created_at;
+        }
+      }
+      return formatted;
     });
 
     return {
@@ -276,6 +307,42 @@ export async function datasetRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
+  // POST /:id/refresh — Re-fetch context for all cases
+  app.post<{ Params: { id: string } }>('/:id/refresh', async (request, reply) => {
+    const datasetId = parseInt(request.params.id, 10);
+    if (isNaN(datasetId)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+
+    const dataset = await getDataset(datasetId);
+    if (!dataset) {
+      return reply.status(404).send({ error: 'Dataset not found' });
+    }
+
+    const cases = await listDatasetCases(datasetId);
+    if (cases.length === 0) {
+      return reply.send({ success: true, refreshing: 0 });
+    }
+
+    await updateDatasetStatus(datasetId, 'loading');
+
+    const tasks = cases.map((dc) => async () => {
+      try {
+        const context = await fetchCaseContext(dc.case_id);
+        await updateDatasetCaseContext(dc.id, context);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await updateDatasetCaseContextError(dc.id, message).catch(() => {});
+      }
+    });
+
+    runWithConcurrency(tasks, 3)
+      .then(() => updateDatasetStatus(datasetId, 'ready'))
+      .catch(() => updateDatasetStatus(datasetId, 'ready').catch(() => {}));
+
+    return reply.send({ success: true, refreshing: cases.length });
+  });
+
   // PATCH /cases/:id/label — Save label, notes, labeled_by
   app.patch<{ Params: { id: string } }>('/cases/:id/label', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
@@ -292,7 +359,7 @@ export async function datasetRoutes(app: FastifyInstance) {
       if (!row) {
         return reply.status(404).send({ error: 'Dataset case not found' });
       }
-      return formatDatasetCase(row, null);
+      return formatDatasetCase(row);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
@@ -368,14 +435,32 @@ export async function datasetRoutes(app: FastifyInstance) {
       // 4. Set status to running
       await updateDatasetRunStatus(run.id, 'running');
 
-      // 5. Execute pipelines in background with concurrency 3
+      // 5. Fetch cached contexts to pass to pipeline (optimization: skip re-fetching)
+      const cachedContexts = await getDatasetCaseContexts(datasetId);
+      const contextMap = new Map<number, CaseContext>();
+      for (const dc of cachedContexts) {
+        if (dc.raw_signals) {
+          contextMap.set(dc.case_id as number, {
+            raw_signals: dc.raw_signals as CaseSignalsRaw,
+            case_details: dc.case_details ?? null,
+            case_actions: (dc.case_actions as CaseAction[] | null) ?? null,
+            dialogue_messages: (dc.dialogue_messages as DialogueMessage[] | null) ?? null,
+            file_parse_results: (dc.file_parse_results as string[] | null) ?? null,
+            enrichment_metadata: (dc.enrichment_metadata as Record<string, unknown> | null) ?? null,
+          });
+        }
+      }
+
+      // Execute pipelines in background with concurrency 3
       const cases = await getDatasetRunCases(run.id);
       let failedCount = 0;
       const tasks = cases.map((rc) => async () => {
         try {
+          const cached = contextMap.get(rc.case_id);
           const pipelineRun = await runDisputePipeline(
             rc.case_id,
             runConfig,
+            cached,
           );
           await updateDatasetRunCaseResult(rc.id, pipelineRun.id);
         } catch (error) {
@@ -490,8 +575,11 @@ export async function datasetRoutes(app: FastifyInstance) {
       if (isNaN(datasetId)) {
         return reply.status(400).send({ error: 'Invalid dataset ID' });
       }
-      const runId = request.query.runId ? parseInt(request.query.runId, 10) : undefined;
-      if (request.query.runId && (isNaN(runId!) || runId! <= 0)) {
+      if (!request.query.runId) {
+        return reply.status(400).send({ error: 'runId is required. Select a run to view analytics.' });
+      }
+      const runId = parseInt(request.query.runId, 10);
+      if (isNaN(runId) || runId <= 0) {
         return reply.status(400).send({ error: 'Invalid run ID' });
       }
 
@@ -538,7 +626,7 @@ export async function datasetRoutes(app: FastifyInstance) {
       if (!row) {
         return reply.status(404).send({ error: 'Dataset case not found' });
       }
-      return formatDatasetCase(row, null);
+      return formatDatasetCase(row);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
@@ -568,7 +656,7 @@ export async function datasetRoutes(app: FastifyInstance) {
       if (!row) {
         return reply.status(404).send({ error: 'Dataset case not found' });
       }
-      return formatDatasetCase(row, null);
+      return formatDatasetCase(row);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });

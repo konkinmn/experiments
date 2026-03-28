@@ -1,21 +1,3 @@
-import type { PipelineRunRow } from '../types/dispute-pipeline.js';
-
-export function deriveAutoTags(run: PipelineRunRow): Record<string, string | boolean> {
-  const score = run.dispute_profile.rubric_score;
-  const scoreBucket = score >= 70 ? '70-108' : score >= 40 ? '40-69' : '0-39';
-
-  return {
-    risk_level: run.dispute_profile.risk_level,
-    amount_bucket: 'under_25',
-    rubric_score_bucket: scoreBucket,
-    hard_gate_hit: run.hard_gate_triggered != null,
-    dispute_type: run.planner_output?.args?.fraud_type ?? 'unknown',
-    dispute_sub_type: run.planner_output?.args?.fraud_sub_type ?? 'unknown',
-    has_uncertainty: (run.planner_output?.uncertainty_factors?.length ?? 0) > 0,
-    merchant: run.raw_signals.merchants,
-  };
-}
-
 export interface SegmentMetrics {
   sample_size: number;
   agreement_rate: number | null;

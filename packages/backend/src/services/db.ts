@@ -356,6 +356,35 @@ async function applyMigrations(): Promise<void> {
       `);
     }
 
+    // Migration 017: add context columns to dataset_cases + status to datasets
+    const { rows: ctxCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_cases' AND column_name = 'raw_signals'`,
+    );
+    if (ctxCol.length === 0) {
+      await pool.query(`
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS raw_signals JSONB DEFAULT NULL;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS case_details JSONB DEFAULT NULL;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS case_actions JSONB DEFAULT NULL;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS dialogue_messages JSONB DEFAULT NULL;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS file_parse_results JSONB DEFAULT NULL;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS enrichment_metadata JSONB DEFAULT NULL;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS context_error TEXT DEFAULT NULL;
+        ALTER TABLE dataset_cases ADD COLUMN IF NOT EXISTS context_fetched_at TIMESTAMPTZ DEFAULT NULL;
+      `);
+    }
+
+    const { rows: dsStatusCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'datasets' AND column_name = 'status'`,
+    );
+    if (dsStatusCol.length === 0) {
+      await pool.query(`
+        ALTER TABLE datasets ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ready'
+          CHECK (status IN ('loading', 'ready'));
+      `);
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -625,6 +654,7 @@ export async function listDatasets(): Promise<DatasetWithCounts[]> {
   );
   return rows.map((r) => ({
     ...r,
+    status: (r.status ?? 'ready') as 'loading' | 'ready',
     total_cases: parseInt(r.total_cases, 10),
     labeled_cases: parseInt(r.labeled_cases, 10),
   }));
@@ -766,6 +796,86 @@ export async function datasetCaseExists(id: number): Promise<boolean> {
     [id],
   );
   return rows.length > 0;
+}
+
+export async function updateDatasetCaseContext(
+  id: number,
+  context: {
+    raw_signals: unknown;
+    case_details: unknown;
+    case_actions: unknown;
+    dialogue_messages: unknown;
+    file_parse_results: unknown;
+    enrichment_metadata: unknown;
+  },
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE dataset_cases
+     SET raw_signals = $1, case_details = $2, case_actions = $3,
+         dialogue_messages = $4, file_parse_results = $5, enrichment_metadata = $6,
+         context_error = NULL, context_fetched_at = now()
+     WHERE id = $7`,
+    [
+      JSON.stringify(context.raw_signals),
+      JSON.stringify(context.case_details),
+      JSON.stringify(context.case_actions),
+      JSON.stringify(context.dialogue_messages),
+      JSON.stringify(context.file_parse_results),
+      JSON.stringify(context.enrichment_metadata),
+      id,
+    ],
+  );
+}
+
+export async function updateDatasetCaseContextError(
+  id: number,
+  error: string,
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE dataset_cases SET context_error = $1 WHERE id = $2`,
+    [error, id],
+  );
+}
+
+export async function updateDatasetStatus(
+  id: number,
+  status: 'loading' | 'ready',
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE datasets SET status = $1 WHERE id = $2`,
+    [status, id],
+  );
+}
+
+export async function getDatasetCaseContexts(
+  datasetId: number,
+): Promise<
+  Array<{
+    id: number;
+    case_id: number;
+    raw_signals: unknown | null;
+    case_details: unknown | null;
+    case_actions: unknown | null;
+    dialogue_messages: unknown | null;
+    file_parse_results: unknown | null;
+    enrichment_metadata: unknown | null;
+  }>
+> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `SELECT id, case_id, raw_signals, case_details, case_actions,
+            dialogue_messages, file_parse_results, enrichment_metadata
+     FROM dataset_cases WHERE dataset_id = $1`,
+    [datasetId],
+  );
+  return rows;
 }
 
 export async function deleteDatasetCase(id: number): Promise<number> {
@@ -1017,18 +1127,6 @@ export async function getDatasetRunCases(runId: number): Promise<
   }));
 }
 
-export async function updateDatasetCaseAutoTags(
-  id: number,
-  autoTags: Record<string, string | boolean>,
-): Promise<void> {
-  await ensureMigrations();
-  const pool = getPool();
-  await pool.query(
-    `UPDATE dataset_cases SET auto_tags = $1 WHERE id = $2`,
-    [JSON.stringify(autoTags), id],
-  );
-}
-
 export async function updateDatasetCaseTags(
   id: number,
   tags: string[],
@@ -1043,7 +1141,7 @@ export async function updateDatasetCaseTags(
 }
 
 export async function getDatasetAnalytics(
-  datasetId: number,
+  _datasetId: number,
   runId?: number,
 ): Promise<{
   confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; undecided: number };
@@ -1052,48 +1150,52 @@ export async function getDatasetAnalytics(
   await ensureMigrations();
   const pool = getPool();
 
-  if (runId) {
-    // Analytics for a specific run
-    const { rows } = await pool.query<{
-      auto_tags: Record<string, string | boolean>;
-      label: string | null;
-      pipeline_decision: string | null;
-      hard_gate_triggered: string | null;
-      label_confidence: string | null;
-      disagreement_reason: string | null;
-      label_2: string | null;
-    }>(
-      `SELECT dc.auto_tags, rc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered,
-              rc.label_confidence, rc.disagreement_reason, NULL AS label_2
-       FROM dataset_run_cases rc
-       JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
-       LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
-       WHERE rc.run_id = $1`,
-      [runId],
-    );
-
-    return computeAnalyticsFromRows(rows);
-  } else {
-    // Analytics for baseline (Labels tab)
-    const { rows } = await pool.query<{
-      auto_tags: Record<string, string | boolean>;
-      label: string | null;
-      pipeline_decision: string | null;
-      hard_gate_triggered: string | null;
-      label_confidence: string | null;
-      disagreement_reason: string | null;
-      label_2: string | null;
-    }>(
-      `SELECT dc.auto_tags, dc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered,
-              dc.label_confidence, dc.disagreement_reason, dc.label_2
-       FROM dataset_cases dc
-       LEFT JOIN dispute_pipeline_runs pr ON pr.id = dc.pipeline_run_id
-       WHERE dc.dataset_id = $1`,
-      [datasetId],
-    );
-
-    return computeAnalyticsFromRows(rows);
+  if (!runId) {
+    // No baseline analytics — require a run
+    return {
+      confusion_matrix: { true_credit: 0, false_credit: 0, true_escalate: 0, false_escalate: 0, unlabeled: 0, undecided: 0 },
+      rows: [],
+    };
   }
+
+  // Analytics for a specific run — compute auto_tags from pipeline run data
+  const { rows } = await pool.query<{
+    auto_tags: Record<string, string | boolean>;
+    label: string | null;
+    pipeline_decision: string | null;
+    hard_gate_triggered: string | null;
+    label_confidence: string | null;
+    disagreement_reason: string | null;
+    label_2: string | null;
+  }>(
+    `SELECT
+       jsonb_build_object(
+         'risk_level', COALESCE(pr.dispute_profile->>'risk_level', 'unknown'),
+         'hard_gate_hit', COALESCE(pr.hard_gate_triggered IS NOT NULL, false),
+         'rubric_score_bucket', CASE
+           WHEN pr.dispute_profile IS NULL THEN 'unknown'
+           WHEN COALESCE((pr.dispute_profile->>'rubric_score')::int, 0) >= 70 THEN '70-108'
+           WHEN COALESCE((pr.dispute_profile->>'rubric_score')::int, 0) >= 40 THEN '40-69'
+           ELSE '0-39'
+         END,
+         'amount_bucket', CASE
+           WHEN pr.raw_signals IS NULL THEN 'unknown'
+           WHEN COALESCE((pr.raw_signals->>'total_amount')::numeric, 0) < 25 THEN 'under_25'
+           WHEN COALESCE((pr.raw_signals->>'total_amount')::numeric, 0) < 100 THEN '25_to_100'
+           ELSE 'over_100'
+         END,
+         'dispute_type', COALESCE(pr.planner_output->'args'->>'reason', 'unknown')
+       ) AS auto_tags,
+       dc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered,
+       rc.label_confidence, rc.disagreement_reason, dc.label_2
+     FROM dataset_run_cases rc
+     JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
+     LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
+     WHERE rc.run_id = $1`,
+    [runId],
+  );
+
+  return computeAnalyticsFromRows(rows);
 }
 
 function computeAnalyticsFromRows(
@@ -1196,11 +1298,17 @@ export async function composeDatasets(
 
     // Copy cases from child datasets, deduplicating by case_id
     const { rowCount } = await client.query(
-      `INSERT INTO dataset_cases (dataset_id, case_id, pipeline_run_id, label, label_notes, labeled_by, labeled_at,
+      `INSERT INTO dataset_cases (dataset_id, case_id, pipeline_run_id,
+         raw_signals, case_details, case_actions, dialogue_messages,
+         file_parse_results, enrichment_metadata, context_fetched_at,
+         label, label_notes, labeled_by, labeled_at,
          label_confidence, disagreement_reason, disagreement_notes, label_2, label_2_notes, label_2_by, label_2_at,
          label_2_confidence, manual_tags, auto_tags)
        SELECT DISTINCT ON (dc.case_id)
-         $1, dc.case_id, dc.pipeline_run_id, dc.label, dc.label_notes, dc.labeled_by, dc.labeled_at,
+         $1, dc.case_id, dc.pipeline_run_id,
+         dc.raw_signals, dc.case_details, dc.case_actions, dc.dialogue_messages,
+         dc.file_parse_results, dc.enrichment_metadata, dc.context_fetched_at,
+         dc.label, dc.label_notes, dc.labeled_by, dc.labeled_at,
          dc.label_confidence, dc.disagreement_reason, dc.disagreement_notes, dc.label_2, dc.label_2_notes,
          dc.label_2_by, dc.label_2_at, dc.label_2_confidence, dc.manual_tags, dc.auto_tags
        FROM dataset_cases dc

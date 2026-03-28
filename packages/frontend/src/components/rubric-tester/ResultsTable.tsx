@@ -124,17 +124,72 @@ function SignalRow({ label, value, pts }: { label: string; value: string; pts?: 
   );
 }
 
-function formatSignalValue(value: unknown): string {
+function formatSignalValue(value: unknown, key?: string): string {
   if (value == null) return '—';
-  if (typeof value === 'object') {
-    // BQ Timestamp objects have a `value` property
-    if ('value' in value && typeof (value as { value: unknown }).value === 'string') {
-      return (value as { value: string }).value;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  // BQ Timestamp objects have a `value` property
+  if (typeof value === 'object' && value !== null && 'value' in value) {
+    const inner = (value as { value: unknown }).value;
+    if (typeof inner === 'string') {
+      // Try formatting as date if it looks like a timestamp
+      if (key === 'case_created_at' && inner.includes('T')) {
+        return new Date(inner).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      }
+      return inner;
     }
-    return JSON.stringify(value);
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  // Format amounts with £
+  if (key && (key === 'total_amount' || key === 'max_transaction_amount')) {
+    return `£${Number(value).toFixed(2)}`;
+  }
+  // Format timestamps
+  if (key === 'case_created_at' && typeof value === 'string' && value.includes('T')) {
+    return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   }
   return String(value);
 }
+
+/** Signal groups for the Dataset tab — organized by category for readability */
+const SIGNAL_GROUPS: { title: string; signals: { key: keyof CaseSignalsRaw; label: string }[] }[] = [
+  {
+    title: 'Transaction',
+    signals: [
+      { key: 'total_amount', label: 'Total Amount' },
+      { key: 'max_transaction_amount', label: 'Max Transaction' },
+      { key: 'merchants', label: 'Merchants' },
+      { key: 'case_created_at', label: 'Case Created' },
+    ],
+  },
+  {
+    title: 'Account',
+    signals: [
+      { key: 'account_age_days', label: 'Account Age (days)' },
+      { key: 'account_status', label: 'Status' },
+      { key: 'tier_name', label: 'Tier' },
+      { key: 'trust_score', label: 'Trust Score' },
+      { key: 'is_money_maker', label: 'Money Maker' },
+    ],
+  },
+  {
+    title: 'Risk Flags',
+    signals: [
+      { key: 'cifas_count', label: 'CIFAS' },
+      { key: 'scammer_count', label: 'Scammer' },
+      { key: 'scam_victim_count', label: 'Scam Victim' },
+      { key: 'railsr_disputes_last_6_months', label: 'Disputes (6m)' },
+      { key: 'railsr_disputes_last_30_days', label: 'Disputes (30d)' },
+    ],
+  },
+  {
+    title: 'Activity',
+    signals: [
+      { key: 'tx_count_90_days', label: 'Txns (90d)' },
+      { key: 'active_months', label: 'Active Months' },
+      { key: 'prior_payments_to_merchant', label: 'Prior Merchant Payments' },
+    ],
+  },
+];
 
 export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, onTagCase, onDatasetLabel2, agreementMap }: ResultsTableProps) {
   if (verdictOptions === 'dataset') {
@@ -150,8 +205,14 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
     return (
       <div className="space-y-4">
         {cases.map((dc) => {
-          if (!dc.pipelineRun) {
-            const isFailed = !!dc.pipelineError;
+          // New architecture: show context data (no pipeline run needed)
+          const hasContext = !!dc.rawSignals;
+          const isContextFailed = !!dc.contextError;
+          // Legacy: fall back to pipeline data if available
+          const hasPipelineRun = !!dc.pipelineRun;
+
+          if (!hasContext && !hasPipelineRun) {
+            const isFailed = isContextFailed || !!dc.pipelineError;
             return (
               <div key={dc.id} className={`rounded-lg border bg-white ${isFailed ? 'border-red-200' : 'border-gray-200'}`}>
                 <div className="flex items-center gap-8 px-5 py-4">
@@ -162,12 +223,12 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
                   {isFailed ? (
                     <div className="flex items-center gap-2 text-sm text-red-600">
                       <AlertTriangle className="h-4 w-4" />
-                      Pipeline failed
+                      {dc.contextError ? 'Context fetch failed' : 'Pipeline failed'}
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Running pipeline...
+                      Fetching context...
                     </div>
                   )}
                   {onDeleteCase && (
@@ -183,7 +244,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
                 </div>
                 <div className="border-t px-5 py-4">
                   {isFailed ? (
-                    <p className="text-sm text-red-600">{dc.pipelineError}</p>
+                    <p className="text-sm text-red-600">{dc.contextError || dc.pipelineError}</p>
                   ) : (
                     <div className="space-y-3 animate-pulse">
                       <div className="h-4 bg-gray-200 rounded w-3/4" />
@@ -196,98 +257,33 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
             );
           }
 
-          const r = dc.pipelineRun;
-          const risk = RISK_BADGE[r.disputeProfile.risk_level];
-          const decision = r.hardGateTriggered
-            ? { label: HARD_GATE_LABELS[r.hardGateTriggered] ?? r.hardGateTriggered, variant: 'red' as const }
-            : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
+          // For pipeline run data (run tabs or legacy datasets), use original rendering
+          if (hasPipelineRun && !hasContext) {
+            const r = dc.pipelineRun!;
+            const risk = RISK_BADGE[r.disputeProfile.risk_level];
+            const decision = r.hardGateTriggered
+              ? { label: HARD_GATE_LABELS[r.hardGateTriggered] ?? r.hardGateTriggered, variant: 'red' as const }
+              : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
+            const labelBadge = dc.label ? LABEL_BADGE[dc.label] : null;
+            // Fall through to the existing pipeline-based rendering below
+            return <DatasetCaseCard key={dc.id} dc={dc} r={r} risk={risk} decision={decision} labelBadge={labelBadge} onDatasetLabel={onDatasetLabel} onDeleteCase={onDeleteCase} onTagCase={onTagCase} onDatasetLabel2={onDatasetLabel2} agreementMap={agreementMap} />;
+          }
+
+          // New: render context-only card (Dataset tab)
+          const signals = dc.rawSignals!;
           const labelBadge = dc.label ? LABEL_BADGE[dc.label] : null;
 
           return (
-            <div key={dc.id} className="rounded-lg border border-gray-200 bg-white">
-              <div className="flex items-center gap-8 px-5 py-4">
-                <div className="min-w-0">
-                  <span className="text-xs text-muted-foreground">Case</span>
-                  <p className="font-mono text-lg font-bold">
-                    <a href={WS_CASE_URL(r.rawSignals.alias, dc.caseId)} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 hover:underline">{dc.caseId}</a>
-                  </p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Risk</span>
-                  <div className="mt-1">
-                    <Badge variant={risk.variant}>{risk.label}</Badge>
-                  </div>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Decision</span>
-                  <div className="mt-1">
-                    <Badge variant={decision.variant}>{decision.label}</Badge>
-                  </div>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Duration</span>
-                  <p className="text-sm mt-1">{(r.pipelineDurationMs / 1000).toFixed(1)}s</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">Label</span>
-                  <div className="mt-1">
-                    {labelBadge ? (
-                      <Badge variant={labelBadge.variant}>{labelBadge.label}</Badge>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">Pending</span>
-                    )}
-                  </div>
-                </div>
-                {agreementMap && (
-                  <div className="ml-auto">
-                    {agreementMap[dc.id] === true && (
-                      <div className="h-7 w-7 rounded-full bg-green-100 flex items-center justify-center" title="Agrees with label">
-                        <Check className="h-4 w-4 text-green-600" />
-                      </div>
-                    )}
-                    {agreementMap[dc.id] === false && (
-                      <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center" title="Disagrees with label">
-                        <X className="h-4 w-4 text-red-600" />
-                      </div>
-                    )}
-                    {agreementMap[dc.id] == null && (
-                      <div className="h-7 w-7 rounded-full bg-gray-100 flex items-center justify-center" title="No agreement data">
-                        <span className="text-gray-400 text-sm">—</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {!agreementMap && onDeleteCase && (
-                  <div className="ml-auto">
-                    <button
-                      className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors"
-                      onClick={() => onDeleteCase(dc.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="border-t px-5 py-4">
-                <ExpandedDetail
-                  result={r}
-                  verdictOptions="dataset"
-                  datasetCaseId={dc.id}
-                  datasetLabel={dc.label}
-                  datasetLabelNotes={dc.labelNotes}
-                  datasetLabelConfidence={dc.labelConfidence}
-                  datasetDisagreementReason={dc.disagreementReason}
-                  datasetDisagreementNotes={dc.disagreementNotes}
-                  datasetManualTags={dc.manualTags}
-                  datasetLabel2={dc.label2}
-                  datasetLabel2Notes={dc.label2Notes}
-                  datasetLabel2Confidence={dc.label2Confidence}
-                  onDatasetLabel={onDatasetLabel}
-                  onDatasetLabel2={onDatasetLabel2}
-                  onTagCase={onTagCase}
-                />
-              </div>
-            </div>
+            <ContextCaseCard
+              key={dc.id}
+              dc={dc}
+              signals={signals}
+              labelBadge={labelBadge}
+              onDatasetLabel={onDatasetLabel}
+              onDeleteCase={onDeleteCase}
+              onTagCase={onTagCase}
+              onDatasetLabel2={onDatasetLabel2}
+            />
           );
         })}
       </div>
@@ -362,6 +358,259 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Context-only card for the Dataset tab (no pipeline output) */
+function ContextCaseCard({
+  dc,
+  signals,
+  labelBadge,
+  onDatasetLabel,
+  onDeleteCase,
+  onTagCase,
+  onDatasetLabel2,
+}: {
+  dc: DatasetCase;
+  signals: CaseSignalsRaw;
+  labelBadge: { label: string; variant: 'green' | 'amber' | 'blue' } | null;
+  onDatasetLabel?: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => void;
+  onDeleteCase?: (id: number) => void;
+  onTagCase?: (id: number, tags: string[]) => void;
+  onDatasetLabel2?: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center gap-8 px-5 py-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center gap-1 text-gray-400">
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </div>
+        <div className="min-w-0">
+          <span className="text-xs text-muted-foreground">Case</span>
+          <p className="font-mono text-lg font-bold">
+            <a href={WS_CASE_URL(signals.alias, dc.caseId)} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 hover:underline" onClick={(e) => e.stopPropagation()}>{dc.caseId}</a>
+          </p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Amount</span>
+          <p className="text-sm mt-1 font-medium">{typeof signals.total_amount === 'number' ? `£${signals.total_amount.toFixed(2)}` : '—'}</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Account Age</span>
+          <p className="text-sm mt-1">{signals.account_age_days}d</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">CIFAS</span>
+          <p className="text-sm mt-1">{signals.cifas_count}</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Trust</span>
+          <p className="text-sm mt-1">{signals.trust_score ?? '—'}</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Label</span>
+          <div className="mt-1">
+            {labelBadge ? (
+              <Badge variant={labelBadge.variant}>{labelBadge.label}</Badge>
+            ) : (
+              <span className="text-sm text-muted-foreground">Pending</span>
+            )}
+          </div>
+        </div>
+        {onDeleteCase && (
+          <div className="ml-auto">
+            <button
+              className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors"
+              onClick={(e) => { e.stopPropagation(); onDeleteCase(dc.id); }}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+      {expanded && (
+        <div className="border-t px-5 py-4 space-y-4">
+          {/* Signals — grouped by category */}
+          <div className="grid grid-cols-2 gap-4">
+            {SIGNAL_GROUPS.map((group) => (
+              <div key={group.title} className="rounded-md border border-gray-100 bg-gray-50/50 px-4 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2">{group.title}</p>
+                <div className="space-y-1.5">
+                  {group.signals.map(({ key, label }) => (
+                    <div key={key} className="flex items-baseline justify-between gap-2 text-sm overflow-hidden">
+                      <span className="text-muted-foreground shrink-0">{label}</span>
+                      <span className="border-b border-dotted border-gray-200 flex-1 min-w-4 mx-1 translate-y-[-3px]" />
+                      <span className="font-mono text-right truncate min-w-0" title={formatSignalValue(signals[key], key)}>{formatSignalValue(signals[key], key)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Customer Dialogue */}
+          {dc.dialogueMessages && dc.dialogueMessages.length > 0 && (
+            <CollapsibleSection title="Customer Dialogue" icon={<MessageSquare className="h-4 w-4" />} count={dc.dialogueMessages.length}>
+              <div className="space-y-2">
+                {dc.dialogueMessages.map((m, i) => (
+                  <div key={i} className="text-sm">
+                    <span className="font-medium text-gray-700">{m.role}:</span>{' '}
+                    <span className="text-gray-600">{m.content}</span>
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+          )}
+
+          {/* File Parse Results */}
+          {dc.fileParseResults && dc.fileParseResults.length > 0 && (
+            <CollapsibleSection title="Parsed Files" icon={<FileText className="h-4 w-4" />} count={dc.fileParseResults.length}>
+              <div className="space-y-2">
+                {dc.fileParseResults.map((desc, i) => (
+                  <pre key={i} className="text-xs bg-gray-50 p-3 rounded whitespace-pre-wrap">{desc}</pre>
+                ))}
+              </div>
+            </CollapsibleSection>
+          )}
+
+          {/* Case Actions */}
+          {dc.caseActions && dc.caseActions.length > 0 && (
+            <CollapsibleSection title="Case Actions" icon={<Code className="h-4 w-4" />} count={dc.caseActions.length}>
+              <div className="space-y-1 text-sm">
+                {dc.caseActions.map((a, i) => (
+                  <div key={i} className="flex gap-2">
+                    <Badge variant="gray">{a.action_type}</Badge>
+                    <span className="text-muted-foreground">{a.status}</span>
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+          )}
+
+          {/* Label controls */}
+          {onDatasetLabel && (
+            <DatasetLabelControls
+              datasetCaseId={dc.id}
+              label={dc.label}
+              labelNotes={dc.labelNotes}
+              labelConfidence={dc.labelConfidence}
+              onLabel={onDatasetLabel}
+            />
+          )}
+
+          {/* Second labeler */}
+          {onDatasetLabel2 && (
+            <DatasetLabel2Controls
+              datasetCaseId={dc.id}
+              label2={dc.label2}
+              label2Notes={dc.label2Notes}
+              label2Confidence={dc.label2Confidence}
+              onLabel2={onDatasetLabel2}
+            />
+          )}
+
+          {/* Tags */}
+          {onTagCase && (
+            <TagControls
+              datasetCaseId={dc.id}
+              tags={dc.manualTags}
+              onTagCase={onTagCase}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Wrapper for legacy datasets that still have pipelineRun data */
+function DatasetCaseCard({
+  dc,
+  r,
+  risk,
+  decision,
+  labelBadge,
+  onDatasetLabel,
+  onDeleteCase,
+  onTagCase,
+  onDatasetLabel2,
+  agreementMap,
+}: {
+  dc: DatasetCase;
+  r: PipelineResult;
+  risk: { label: string; variant: 'green' | 'amber' | 'red' };
+  decision: { label: string; variant: string };
+  labelBadge: { label: string; variant: 'green' | 'amber' | 'blue' } | null;
+  onDatasetLabel?: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => void;
+  onDeleteCase?: (id: number) => void;
+  onTagCase?: (id: number, tags: string[]) => void;
+  onDatasetLabel2?: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
+  agreementMap?: Record<number, boolean | null>;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center gap-8 px-5 py-4">
+        <div className="min-w-0">
+          <span className="text-xs text-muted-foreground">Case</span>
+          <p className="font-mono text-lg font-bold">
+            <a href={WS_CASE_URL(r.rawSignals.alias, dc.caseId)} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 hover:underline">{dc.caseId}</a>
+          </p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Risk</span>
+          <div className="mt-1"><Badge variant={risk.variant}>{risk.label}</Badge></div>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Decision</span>
+          <div className="mt-1"><Badge variant={decision.variant as 'green' | 'amber' | 'red'}>{decision.label}</Badge></div>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Duration</span>
+          <p className="text-sm mt-1">{(r.pipelineDurationMs / 1000).toFixed(1)}s</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Label</span>
+          <div className="mt-1">
+            {labelBadge ? <Badge variant={labelBadge.variant}>{labelBadge.label}</Badge> : <span className="text-sm text-muted-foreground">Pending</span>}
+          </div>
+        </div>
+        {agreementMap && (
+          <div className="ml-auto">
+            {agreementMap[dc.id] === true && <div className="h-7 w-7 rounded-full bg-green-100 flex items-center justify-center" title="Agrees"><Check className="h-4 w-4 text-green-600" /></div>}
+            {agreementMap[dc.id] === false && <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center" title="Disagrees"><X className="h-4 w-4 text-red-600" /></div>}
+            {agreementMap[dc.id] == null && <div className="h-7 w-7 rounded-full bg-gray-100 flex items-center justify-center" title="No data"><span className="text-gray-400 text-sm">—</span></div>}
+          </div>
+        )}
+        {!agreementMap && onDeleteCase && (
+          <div className="ml-auto">
+            <button className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors" onClick={() => onDeleteCase(dc.id)}>
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="border-t px-5 py-4">
+        <ExpandedDetail
+          result={r}
+          verdictOptions="dataset"
+          datasetCaseId={dc.id}
+          datasetLabel={dc.label}
+          datasetLabelNotes={dc.labelNotes}
+          datasetLabelConfidence={dc.labelConfidence}
+          datasetDisagreementReason={dc.disagreementReason}
+          datasetDisagreementNotes={dc.disagreementNotes}
+          datasetManualTags={dc.manualTags}
+          datasetLabel2={dc.label2}
+          datasetLabel2Notes={dc.label2Notes}
+          datasetLabel2Confidence={dc.label2Confidence}
+          onDatasetLabel={onDatasetLabel}
+          onDatasetLabel2={onDatasetLabel2}
+          onTagCase={onTagCase}
+        />
+      </div>
     </div>
   );
 }
@@ -1032,6 +1281,158 @@ function ExpandedDetail({
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function CollapsibleSection({ title, icon, count, children }: { title: string; icon: React.ReactNode; count?: number; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900" onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        {icon}
+        {title}{count != null && ` (${count})`}
+      </button>
+      {open && <div className="mt-2 ml-5">{children}</div>}
+    </div>
+  );
+}
+
+function DatasetLabelControls({
+  datasetCaseId,
+  label,
+  labelNotes,
+  labelConfidence,
+  onLabel,
+}: {
+  datasetCaseId: number;
+  label: DatasetLabel | null;
+  labelNotes: string | null;
+  labelConfidence: string | null;
+  onLabel: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
+}) {
+  const [notes, setNotes] = useState(labelNotes ?? '');
+  const [confidence, setConfidence] = useState(labelConfidence ?? '');
+
+  const handleLabel = (l: DatasetLabel) => {
+    onLabel(datasetCaseId, l, notes || undefined, confidence || null);
+  };
+
+  return (
+    <div className="border-t pt-4 space-y-3">
+      <h4 className="text-sm font-medium text-gray-700">Label</h4>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant={label === 'credit' ? 'default' : 'outline'} onClick={() => handleLabel('credit')}>Credit</Button>
+        <Button size="sm" variant={label === 'escalate' ? 'default' : 'outline'} onClick={() => handleLabel('escalate')}>Escalate</Button>
+        <Button size="sm" variant={label === 'undecided' ? 'default' : 'outline'} onClick={() => handleLabel('undecided')}>Can't decide</Button>
+        <Select className="h-8 text-xs w-[100px]" value={confidence} onChange={(e) => setConfidence(e.target.value)}>
+          <option value="">Confidence</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </Select>
+      </div>
+      <Input
+        placeholder="Notes (optional)"
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        onBlur={() => { if (label) onLabel(datasetCaseId, label, notes || undefined, confidence || null); }}
+        className="text-sm"
+      />
+    </div>
+  );
+}
+
+function DatasetLabel2Controls({
+  datasetCaseId,
+  label2,
+  label2Notes,
+  label2Confidence,
+  onLabel2,
+}: {
+  datasetCaseId: number;
+  label2: DatasetLabel | null;
+  label2Notes: string | null;
+  label2Confidence: string | null;
+  onLabel2: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [notes, setNotes] = useState(label2Notes ?? '');
+  const [confidence, setConfidence] = useState(label2Confidence ?? '');
+
+  const handleLabel = (l: DatasetLabel) => {
+    onLabel2(datasetCaseId, l, notes || undefined, confidence || null);
+  };
+
+  return (
+    <div className="border-t pt-4 space-y-2">
+      <button className="text-sm font-medium text-gray-500 hover:text-gray-700 flex items-center gap-1" onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        Second Labeler {label2 && <Badge variant={LABEL_BADGE[label2].variant} className="ml-1">{LABEL_BADGE[label2].label}</Badge>}
+      </button>
+      {open && (
+        <div className="space-y-2 ml-4">
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant={label2 === 'credit' ? 'default' : 'outline'} onClick={() => handleLabel('credit')}>Credit</Button>
+            <Button size="sm" variant={label2 === 'escalate' ? 'default' : 'outline'} onClick={() => handleLabel('escalate')}>Escalate</Button>
+            <Button size="sm" variant={label2 === 'undecided' ? 'default' : 'outline'} onClick={() => handleLabel('undecided')}>Can't decide</Button>
+            <Select className="h-8 text-xs w-[100px]" value={confidence} onChange={(e) => setConfidence(e.target.value)}>
+              <option value="">Confidence</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </Select>
+          </div>
+          <Input
+            placeholder="Notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={() => { if (label2) onLabel2(datasetCaseId, label2, notes || undefined, confidence || null); }}
+            className="text-sm"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TagControls({
+  datasetCaseId,
+  tags,
+  onTagCase,
+}: {
+  datasetCaseId: number;
+  tags: string[];
+  onTagCase: (id: number, tags: string[]) => void;
+}) {
+  const [newTag, setNewTag] = useState('');
+
+  const addTag = () => {
+    if (newTag.trim() && !tags.includes(newTag.trim())) {
+      onTagCase(datasetCaseId, [...tags, newTag.trim()]);
+      setNewTag('');
+    }
+  };
+
+  return (
+    <div className="border-t pt-4 space-y-2">
+      <h4 className="text-sm font-medium text-gray-700">Tags</h4>
+      <div className="flex flex-wrap gap-1">
+        {tags.map((tag) => (
+          <Badge key={tag} variant="gray" className="cursor-pointer" onClick={() => onTagCase(datasetCaseId, tags.filter((t) => t !== tag))}>
+            {tag} <X className="h-3 w-3 ml-1" />
+          </Badge>
+        ))}
+        <Input
+          className="h-6 w-24 text-xs"
+          placeholder="+ tag"
+          value={newTag}
+          onChange={(e) => setNewTag(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') addTag(); }}
+          onBlur={addTag}
+        />
       </div>
     </div>
   );
