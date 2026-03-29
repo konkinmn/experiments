@@ -54,6 +54,7 @@ export function useCaseFilters(cases: DatasetCase[], mode: FilterMode = 'run'): 
           return hardGateFilter === 'hit' ? hit : !hit;
         });
       }
+
     }
 
     if (sortOption === 'default') {

@@ -4,14 +4,13 @@ import { ArrowLeft, Download, Trash2, Loader2, Plus, RefreshCw, Pencil } from 'l
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { ResultsTable } from '@/components/rubric-tester';
-import { NewRunModal, AnalyticsTab, CaseFilterBar, CompareTab } from '@/components/dataset-builder';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { ResultsTable, NewRunModal, AnalyticsTab, CaseFilterBar, CompareTab } from '@/components/dataset-builder';
 import { useCaseFilters } from '@/hooks/useCaseFilters';
 import {
   useDataset,
   useUpdateDataset,
   useLabelDatasetCase,
-  useLabelRunCase,
   useDeleteDatasetCase,
   useDeleteDataset,
   useDatasetRuns,
@@ -21,6 +20,8 @@ import {
   useRefreshDataset,
   useRetryRunCase,
   useRerunDatasetRun,
+  useDeleteDatasetRun,
+  useRenameDatasetRun,
 } from '@/hooks/useDatasetBuilder';
 import { downloadXlsx, type ColumnDef } from '@/lib/download-xlsx';
 import type { DatasetCase, DatasetLabel, DatasetRun } from '@/types';
@@ -57,6 +58,7 @@ export function DatasetDetail() {
   const labelCase = useLabelDatasetCase();
   const deleteCase = useDeleteDatasetCase();
   const deleteDataset = useDeleteDataset();
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const tagCase = useTagCase();
   const labelCase2 = useLabelDatasetCase2();
   const refreshDataset = useRefreshDataset();
@@ -64,6 +66,9 @@ export function DatasetDetail() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('labels');
   const [showNewRunModal, setShowNewRunModal] = useState(false);
+  const [editingRunId, setEditingRunId] = useState<number | null>(null);
+  const [editingRunName, setEditingRunName] = useState('');
+  const renameRun = useRenameDatasetRun();
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
   const [nameValue, setNameValue] = useState('');
@@ -135,11 +140,9 @@ export function DatasetDetail() {
   };
 
   const handleDeleteDataset = () => {
-    if (window.confirm('Delete this dataset and all its cases?')) {
-      deleteDataset.mutate(datasetId, {
-        onSuccess: () => navigate('/dataset'),
-      });
-    }
+    deleteDataset.mutate(datasetId, {
+      onSuccess: () => navigate('/dataset'),
+    });
   };
 
   const handleExport = () => {
@@ -253,7 +256,7 @@ export function DatasetDetail() {
                 Export
               </Button>
             )}
-            <Button variant="outline" className="text-red-600 hover:text-red-700" onClick={handleDeleteDataset}>
+            <Button variant="outline" className="text-red-600 hover:text-red-700" onClick={() => setDeleteConfirmOpen(true)}>
               <Trash2 className="h-4 w-4 mr-2" />
               Delete
             </Button>
@@ -308,8 +311,27 @@ export function DatasetDetail() {
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
             onClick={() => setActiveTab(`run-${run.id}`)}
+            onDoubleClick={(e) => { e.preventDefault(); setEditingRunId(run.id); setEditingRunName(run.name); }}
           >
-            {run.name}
+            {editingRunId === run.id ? (
+              <input
+                className="bg-white border border-blue-400 rounded px-1.5 py-0.5 text-sm font-medium w-32 focus:outline-none"
+                value={editingRunName}
+                onChange={(e) => setEditingRunName(e.target.value)}
+                onBlur={() => {
+                  if (editingRunName.trim() && editingRunName.trim() !== run.name) {
+                    renameRun.mutate({ runId: run.id, name: editingRunName.trim() });
+                  }
+                  setEditingRunId(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }
+                  if (e.key === 'Escape') { setEditingRunId(null); }
+                }}
+                onClick={(e) => e.stopPropagation()}
+                autoFocus
+              />
+            ) : run.name}
             {(run.status === 'pending' || run.status === 'running') && (
               <Loader2 className="h-3 w-3 animate-spin" />
             )}
@@ -351,6 +373,7 @@ export function DatasetDetail() {
         <RunTab
           run={activeRun}
           datasetId={datasetId}
+          onDeleted={() => setActiveTab('labels')}
         />
       ) : null}
 
@@ -359,6 +382,30 @@ export function DatasetDetail() {
         onOpenChange={setShowNewRunModal}
         datasetId={datasetId}
       />
+
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete dataset</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the dataset and all its cases. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteDataset}
+              disabled={deleteDataset.isPending}
+            >
+              {deleteDataset.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -449,20 +496,18 @@ function LabelsTab({
   );
 }
 
-function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
+function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: number; onDeleted: () => void }) {
   const isActive = run.status === 'pending' || run.status === 'running';
   const { data: runCases } = useDatasetRunCases(run.id, {
     enabled: true,
     polling: isActive,
   });
-  const labelRunCase = useLabelRunCase();
   const retryRunCase = useRetryRunCase();
   const rerunAll = useRerunDatasetRun();
+  const deleteRun = useDeleteDatasetRun();
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
-
-  const handleRunLabel = (runCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => {
-    labelRunCase.mutate({ id: runCaseId, label, notes: notes ?? null, labeledBy: null, confidence, disagreementReason, disagreementNotes });
-  };
 
   const handleRetryCase = (runCaseId: number) => {
     setRetryingIds((prev) => new Set(prev).add(runCaseId));
@@ -503,25 +548,23 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
       pipelineRunId: rc.pipelineRunId,
       pipelineError: rc.pipelineError,
       pipelineRun: rc.pipelineRun,
-      label: rc.label,
-      labelNotes: rc.labelNotes,
-      labeledBy: rc.labeledBy,
-      labeledAt: rc.labeledAt,
-      labelConfidence: rc.labelConfidence ?? null,
-      disagreementReason: rc.disagreementReason ?? null,
-      disagreementNotes: rc.disagreementNotes ?? null,
+      label: rc.datasetLabel,
+      labelNotes: rc.datasetLabelNotes,
+      labeledBy: null,
+      labeledAt: null,
+      labelConfidence: (rc.datasetLabelConfidence as DatasetCase['labelConfidence']) ?? null,
+      disagreementReason: null,
+      disagreementNotes: null,
       label2: null,
       label2Notes: null,
       label2By: null,
       label2At: null,
       label2Confidence: null,
-      manualTags: [],
+      manualTags: rc.datasetManualTags ?? [],
       autoTags: {},
       createdAt: '',
     }));
   }, [runCases, datasetId]);
-
-  const filters = useCaseFilters(mappedCases);
 
   const agreementMap: Record<number, boolean | null> = useMemo(() => {
     if (!runCases) return {};
@@ -531,6 +574,8 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
     }
     return map;
   }, [runCases]);
+
+  const filters = useCaseFilters(mappedCases);
 
   const runSummary = useMemo(() => {
     if (!runCases) return { total: 0, labeled: 0, credit: 0, escalate: 0, undecided: 0 };
@@ -556,6 +601,15 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
               <span>Model: <span className="font-medium text-gray-900">{run.config.model}</span></span>
               <span>Prompt: <span className="font-medium text-gray-900">{run.config.prompt_version}</span></span>
               <span>Status: <RunStatusBadge status={run.status} /></span>
+              {run.config.prompt_content && (
+                <button
+                  type="button"
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  onClick={() => setShowPrompt((v) => !v)}
+                >
+                  {showPrompt ? 'Hide prompt' : 'View prompt'}
+                </button>
+              )}
             </div>
             {!isActive && (
               <div className="flex items-center gap-2">
@@ -579,9 +633,21 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
                     Retry failed ({failedCaseIds.length})
                   </Button>
                 )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowDeleteDialog(true)}
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                  Delete run
+                </Button>
               </div>
             )}
           </div>
+          {showPrompt && run.config.prompt_content && (
+            <pre className="mb-4 max-h-64 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 text-xs font-mono text-gray-700 whitespace-pre-wrap">{run.config.prompt_content}</pre>
+          )}
           {isActive && (
             <div className="mb-4">
               <div className="flex items-center gap-2 text-sm text-amber-600 mb-2">
@@ -685,11 +751,31 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
         results={[]}
         verdictOptions="dataset"
         datasetCases={filters.filteredCases}
-        onDatasetLabel={handleRunLabel}
         agreementMap={agreementMap}
         onRetryCase={handleRetryCase}
         retryingCaseIds={retryingIds}
       />
+
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete run</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{run.name}&quot;? This will remove all run results and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteRun.mutate(run.id, { onSuccess: () => { setShowDeleteDialog(false); onDeleted(); } })}
+              disabled={deleteRun.isPending}
+            >
+              {deleteRun.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

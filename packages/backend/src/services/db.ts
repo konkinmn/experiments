@@ -385,6 +385,17 @@ async function applyMigrations(): Promise<void> {
       `);
     }
 
+    // Migration 018: add description column to dataset_runs
+    const { rows: runDescCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_runs' AND column_name = 'description'`,
+    );
+    if (runDescCol.length === 0) {
+      await pool.query(
+        `ALTER TABLE dataset_runs ADD COLUMN IF NOT EXISTS description TEXT DEFAULT NULL`,
+      );
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -523,30 +534,6 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
   return rows[0];
 }
 
-export async function listPipelineRuns(): Promise<PipelineRunRow[]> {
-  const pool = getPool();
-  const { rows } = await pool.query<PipelineRunRow>(
-    'SELECT * FROM dispute_pipeline_runs ORDER BY created_at DESC LIMIT 100',
-  );
-  return rows;
-}
-
-export async function updatePipelineReview(
-  id: number,
-  verdict: string,
-  notes: string | null,
-): Promise<PipelineRunRow | null> {
-  const pool = getPool();
-  const { rows } = await pool.query<PipelineRunRow>(
-    `UPDATE dispute_pipeline_runs
-     SET reviewer_verdict = $1, reviewer_notes = $2, reviewed_at = now()
-     WHERE id = $3
-     RETURNING *`,
-    [verdict, notes, id],
-  );
-  return rows[0] ?? null;
-}
-
 export async function getPipelineRunsByIds(ids: number[]): Promise<PipelineRunRow[]> {
   if (ids.length === 0) return [];
   const pool = getPool();
@@ -555,12 +542,6 @@ export async function getPipelineRunsByIds(ids: number[]): Promise<PipelineRunRo
     [ids],
   );
   return rows;
-}
-
-export async function deletePipelineRun(id: number): Promise<number> {
-  const pool = getPool();
-  const result = await pool.query('DELETE FROM dispute_pipeline_runs WHERE id = $1', [id]);
-  return result.rowCount ?? 0;
 }
 
 // --- Datasets ---
@@ -905,6 +886,7 @@ interface DatasetRunRow {
   id: number;
   dataset_id: number;
   name: string;
+  description: string | null;
   config: RunConfig;
   status: string;
   created_at: string;
@@ -915,14 +897,15 @@ export async function insertDatasetRun(
   datasetId: number,
   name: string,
   config: RunConfig,
+  description?: string | null,
 ): Promise<DatasetRun> {
   await ensureMigrations();
   const pool = getPool();
   const { rows } = await pool.query<DatasetRunRow>(
-    `INSERT INTO dataset_runs (dataset_id, name, config, status)
-     VALUES ($1, $2, $3, 'pending')
+    `INSERT INTO dataset_runs (dataset_id, name, description, config, status)
+     VALUES ($1, $2, $3, $4, 'pending')
      RETURNING *`,
-    [datasetId, name, JSON.stringify(config)],
+    [datasetId, name, description ?? null, JSON.stringify(config)],
   );
   if (!rows[0]) throw new Error('Insert did not return a row');
   return {
@@ -935,6 +918,13 @@ export async function insertDatasetRun(
     escalate_recall: null,
     false_credit_rate: null,
   };
+}
+
+export async function deleteDatasetRun(id: number): Promise<number> {
+  await ensureMigrations();
+  const pool = getPool();
+  const result = await pool.query('DELETE FROM dataset_runs WHERE id = $1', [id]);
+  return result.rowCount ?? 0;
 }
 
 export async function getDatasetRun(runId: number): Promise<DatasetRunRow | null> {
@@ -1050,6 +1040,12 @@ export async function updateDatasetRunStatus(
   }
 }
 
+export async function renameDatasetRun(runId: number, name: string): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(`UPDATE dataset_runs SET name = $1 WHERE id = $2`, [name, runId]);
+}
+
 export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> {
   await ensureMigrations();
   const pool = getPool();
@@ -1098,6 +1094,7 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
     id: r.id,
     dataset_id: r.dataset_id,
     name: r.name,
+    description: r.description,
     config: r.config,
     status: r.status as DatasetRun['status'],
     created_at: r.created_at,
@@ -1126,6 +1123,10 @@ interface DatasetRunCaseDbRow {
   label_confidence: string | null;
   disagreement_reason: string | null;
   disagreement_notes: string | null;
+  dataset_label?: DatasetLabel | null;
+  dataset_label_notes?: string | null;
+  dataset_label_confidence?: string | null;
+  dataset_manual_tags?: string[];
 }
 
 export async function getDatasetRunCases(runId: number): Promise<
@@ -1144,6 +1145,10 @@ export async function getDatasetRunCases(runId: number): Promise<
     disagreement_reason: string | null;
     disagreement_notes: string | null;
     pipeline_run: PipelineRunRow | null;
+    dataset_label: DatasetLabel | null;
+    dataset_label_notes: string | null;
+    dataset_label_confidence: string | null;
+    dataset_manual_tags: string[];
   }>
 > {
   await ensureMigrations();
@@ -1151,7 +1156,9 @@ export async function getDatasetRunCases(runId: number): Promise<
   const { rows } = await pool.query<DatasetRunCaseDbRow>(
     `SELECT rc.id, rc.run_id, rc.dataset_case_id, rc.pipeline_run_id, rc.pipeline_error, rc.created_at,
             dc.case_id, rc.label, rc.label_notes, rc.labeled_by, rc.labeled_at,
-            rc.label_confidence, rc.disagreement_reason, rc.disagreement_notes
+            rc.label_confidence, rc.disagreement_reason, rc.disagreement_notes,
+            dc.label AS dataset_label, dc.label_notes AS dataset_label_notes, dc.label_confidence AS dataset_label_confidence,
+            dc.manual_tags AS dataset_manual_tags
      FROM dataset_run_cases rc
      JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
      WHERE rc.run_id = $1
@@ -1181,6 +1188,10 @@ export async function getDatasetRunCases(runId: number): Promise<
     disagreement_reason: r.disagreement_reason,
     disagreement_notes: r.disagreement_notes,
     pipeline_run: r.pipeline_run_id ? (runMap.get(r.pipeline_run_id) ?? null) : null,
+    dataset_label: r.dataset_label ?? null,
+    dataset_label_notes: r.dataset_label_notes ?? null,
+    dataset_label_confidence: r.dataset_label_confidence ?? null,
+    dataset_manual_tags: r.dataset_manual_tags ?? [],
   }));
 }
 

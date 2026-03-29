@@ -1,4 +1,5 @@
 export { NewRunModal } from './NewRunModal';
+export { ResultsTable } from './ResultsTable';
 export { AnalyticsTab } from './AnalyticsTab';
 export { ConfusionMatrix } from './ConfusionMatrix';
 export { StratifiedMetrics } from './StratifiedMetrics';

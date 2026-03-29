@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { DatasetLabel, DatasetSourceType, RubricWeights } from '@/types';
+import type { DatasetLabel, DatasetSourceType, PipelineConfig } from '@/types';
 
 export function useDatasets() {
   return useQuery({
@@ -133,6 +133,26 @@ export function useRerunDatasetRun() {
   });
 }
 
+export function useRenameDatasetRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, name }: { runId: number; name: string }) => api.renameDatasetRun(runId, name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });
+    },
+  });
+}
+
+export function useDeleteDatasetRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: number) => api.deleteDatasetRun(runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });
+    },
+  });
+}
+
 export function useRunOptions() {
   return useQuery({
     queryKey: ['run-options'],
@@ -161,14 +181,18 @@ export function useCreateRun() {
     mutationFn: (params: {
       datasetId: number;
       name: string;
+      description?: string;
       model: string;
       prompt_version: string;
-      rubric_weights: RubricWeights;
+      prompt_content?: string;
+      pipeline_config: PipelineConfig;
     }) => api.createDatasetRun(params.datasetId, {
       name: params.name,
+      description: params.description,
       model: params.model,
       prompt_version: params.prompt_version,
-      rubric_weights: params.rubric_weights,
+      prompt_content: params.prompt_content,
+      pipeline_config: params.pipeline_config,
     }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['dataset-runs', variables.datasetId] });

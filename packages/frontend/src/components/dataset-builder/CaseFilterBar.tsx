@@ -73,6 +73,7 @@ export function CaseFilterBar({
               <option value="clear">Clear</option>
             </Select>
           </div>
+
         </>
       )}
 

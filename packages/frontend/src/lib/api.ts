@@ -5,7 +5,6 @@ import type {
   CaseFilterParams,
   FilteredCasesResponse,
   JobSummary,
-  PipelineResult,
   Dataset,
   DatasetWithCases,
   DatasetCase,
@@ -14,7 +13,7 @@ import type {
   DatasetRun,
   DatasetRunCase,
   RunOptions,
-  RubricWeights,
+  PipelineConfig,
   DatasetAnalytics,
   RunComparisonResult,
 } from '@/types';
@@ -71,27 +70,6 @@ export const api = {
 
   getJobs: () => fetchApi<{ data: JobSummary[] }>('/api/timeline-analyzer/jobs'),
 
-  // Dispute Pipeline API
-  runDisputePipeline: (caseId: number) =>
-    fetchApi<PipelineResult>('/api/dispute-pipeline/run', {
-      method: 'POST',
-      body: JSON.stringify({ caseId }),
-    }),
-
-  getPipelineResults: () =>
-    fetchApi<{ data: PipelineResult[] }>('/api/dispute-pipeline/results'),
-
-  submitPipelineReview: (id: number, verdict: 'correct' | 'incorrect', notes?: string) =>
-    fetchApi<PipelineResult>(`/api/dispute-pipeline/results/${id}/review`, {
-      method: 'PATCH',
-      body: JSON.stringify({ verdict, notes: notes ?? null }),
-    }),
-
-  deletePipelineResult: (id: number) =>
-    fetchApi<{ success: boolean }>(`/api/dispute-pipeline/results/${id}`, {
-      method: 'DELETE',
-    }),
-
   // Dataset Builder API
   getDatasets: () =>
     fetchApi<{ data: Dataset[] }>('/api/datasets'),
@@ -145,7 +123,7 @@ export const api = {
   getDatasetRuns: (datasetId: number) =>
     fetchApi<{ data: DatasetRun[] }>(`/api/datasets/${datasetId}/runs`),
 
-  createDatasetRun: (datasetId: number, config: { name: string; model: string; prompt_version: string; rubric_weights: RubricWeights }) =>
+  createDatasetRun: (datasetId: number, config: { name: string; description?: string; model: string; prompt_version: string; prompt_content?: string; pipeline_config: PipelineConfig }) =>
     fetchApi<DatasetRun>(`/api/datasets/${datasetId}/runs`, {
       method: 'POST',
       body: JSON.stringify(config),
@@ -162,6 +140,17 @@ export const api = {
   rerunDatasetRun: (runId: number) =>
     fetchApi<{ success: boolean; rerunning: number }>(`/api/datasets/runs/${runId}/rerun`, {
       method: 'POST',
+    }),
+
+  renameDatasetRun: (runId: number, name: string) =>
+    fetchApi<{ success: boolean }>(`/api/datasets/runs/${runId}/name`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteDatasetRun: (runId: number) =>
+    fetchApi<{ success: boolean }>(`/api/datasets/runs/${runId}`, {
+      method: 'DELETE',
     }),
 
   // Dataset Analytics API

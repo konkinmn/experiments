@@ -32,11 +32,13 @@ import {
   getDatasetCaseContexts,
   getRunCaseWithContext,
   getDatasetRun,
+  deleteDatasetRun,
+  renameDatasetRun,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
 import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig, CaseContext, CaseSignalsRaw, CaseAction, DialogueMessage } from '../types/dispute-pipeline.js';
-import { DEFAULT_RUBRIC_WEIGHTS } from '../services/dispute-pipeline.js';
-import { listPrompts } from '../services/prompts.js';
+import { DEFAULT_PIPELINE_CONFIG } from '../services/dispute-pipeline.js';
+import { getPromptById } from '../services/prompts.js';
 import { computeFullAnalytics, computeRunComparison } from '../services/dataset-analytics.js';
 
 const CreateDatasetSchema = z.object({
@@ -127,21 +129,19 @@ async function runWithConcurrency<T>(
   return results;
 }
 
-const SUPPORTED_MODELS = [
-  'claude-sonnet-4-5@20250929',
-  'claude-sonnet-4-6',
-  'claude-opus-4-6',
-  'gemini-2.5-flash',
-];
+const DEFAULT_MODEL = process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929';
+const DEFAULT_PROMPT_ID = 'dispute-planner-v1';
 
 export async function datasetRoutes(app: FastifyInstance) {
-  // GET /run-options — Available models, prompts, and default rubric weights
+  // GET /run-options — Default model, prompt, and pipeline config
   app.get('/run-options', async () => {
-    const prompts = await listPrompts();
+    const prompt = await getPromptById(DEFAULT_PROMPT_ID);
     return {
-      models: SUPPORTED_MODELS,
-      prompts,
-      default_rubric: DEFAULT_RUBRIC_WEIGHTS,
+      default_model: DEFAULT_MODEL,
+      default_prompt: prompt
+        ? { id: prompt.id, content: prompt.content }
+        : { id: DEFAULT_PROMPT_ID, content: '' },
+      default_pipeline_config: DEFAULT_PIPELINE_CONFIG,
     };
   });
 
@@ -411,19 +411,72 @@ export async function datasetRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
+  // PATCH /runs/:runId/name — Rename a run
+  app.patch<{ Params: { runId: string } }>('/runs/:runId/name', async (request, reply) => {
+    const runId = parseInt(request.params.runId, 10);
+    if (isNaN(runId)) {
+      return reply.status(400).send({ error: 'Invalid run ID' });
+    }
+    const { name } = z.object({ name: z.string().min(1) }).parse(request.body);
+    await renameDatasetRun(runId, name);
+    return { success: true };
+  });
+
+  // DELETE /runs/:runId — Remove a run and its cases
+  app.delete<{ Params: { runId: string } }>('/runs/:runId', async (request, reply) => {
+    const runId = parseInt(request.params.runId, 10);
+    if (isNaN(runId)) {
+      return reply.status(400).send({ error: 'Invalid run ID' });
+    }
+    const count = await deleteDatasetRun(runId);
+    if (count === 0) {
+      return reply.status(404).send({ error: 'Dataset run not found' });
+    }
+    return { success: true };
+  });
+
   // --- Dataset Runs ---
 
   const CreateRunSchema = z.object({
     name: z.string().min(1),
+    description: z.string().nullable().optional(),
     model: z.string().min(1),
     prompt_version: z.string().min(1),
+    prompt_content: z.string().optional(),
+    pipeline_config: z.object({
+      hard_gates: z.object({
+        cifas: z.boolean(),
+        confirmed_scammer: z.boolean(),
+        account_not_active: z.boolean(),
+        railsr_dispute_last_6_months: z.boolean(),
+      }),
+      rubric_weights: z.object({
+        account_trust_max: z.number(),
+        dispute_history_max: z.number(),
+        transaction_risk_max: z.number(),
+        green_threshold: z.number(),
+        amber_threshold: z.number(),
+      }),
+      scoring_rules: z.object({
+        account_age: z.array(z.object({ min_days: z.number(), points: z.number() })),
+        tier: z.record(z.number()),
+        money_maker_points: z.number(),
+        trust_score: z.record(z.number()),
+        tx_activity: z.object({ min_count: z.number(), points: z.number() }),
+        dispute_history: z.array(z.object({ max_disputes: z.number(), points: z.number() })),
+        recent_dispute_penalty: z.number(),
+        scam_victim_penalty: z.number(),
+        amount_brackets: z.array(z.object({ max_amount: z.number(), points: z.number() })),
+      }),
+    }).optional(),
+    // Legacy: accept rubric_weights directly for backward compatibility
     rubric_weights: z.object({
       account_trust_max: z.number(),
       dispute_history_max: z.number(),
       transaction_risk_max: z.number(),
       green_threshold: z.number(),
       amber_threshold: z.number(),
-    }),
+    }).optional(),
   });
 
   // POST /:id/runs — Create and execute a dataset run
@@ -444,12 +497,16 @@ export async function datasetRoutes(app: FastifyInstance) {
       const runConfig: RunConfig = {
         model: body.model,
         prompt_version: body.prompt_version,
-        rubric_weights: body.rubric_weights,
+        prompt_content: body.prompt_content,
+        pipeline_config: body.pipeline_config ?? {
+          ...DEFAULT_PIPELINE_CONFIG,
+          rubric_weights: body.rubric_weights ?? DEFAULT_PIPELINE_CONFIG.rubric_weights,
+        },
         name: body.name,
       };
 
       // 1. Insert run row
-      const run = await insertDatasetRun(datasetId, body.name, runConfig);
+      const run = await insertDatasetRun(datasetId, body.name, runConfig, body.description);
 
       // 2. Fetch all dataset cases
       const datasetCases = await listDatasetCases(datasetId);
@@ -565,7 +622,11 @@ export async function datasetRoutes(app: FastifyInstance) {
         pipelineRunId: rc.pipeline_run_id,
         pipelineError: rc.pipeline_error,
         pipelineRun: rc.pipeline_run ? formatPipelineRun(rc.pipeline_run) : null,
-        agreement: computeAgreement(rc.label, rc.pipeline_run),
+        datasetLabel: rc.dataset_label,
+        datasetLabelNotes: rc.dataset_label_notes,
+        datasetLabelConfidence: rc.dataset_label_confidence,
+        datasetManualTags: rc.dataset_manual_tags,
+        agreement: computeAgreement(rc.dataset_label, rc.pipeline_run),
       })),
     };
   });

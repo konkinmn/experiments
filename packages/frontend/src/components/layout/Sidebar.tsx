@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 export function Sidebar() {
   const location = useLocation();
   const isTimelineAnalyzerActive = location.pathname === '/timeline-analyzer';
-  const isRubricTesterActive = location.pathname === '/rubric-tester';
   const isDatasetBuilderActive = location.pathname.startsWith('/dataset');
 
   return (
@@ -37,20 +36,6 @@ export function Sidebar() {
               <Activity className="h-3.5 w-3.5 text-blue-600" />
             </div>
             <span>Case timeline analyzer</span>
-          </Link>
-          <Link
-            to="/rubric-tester"
-            className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
-              isRubricTesterActive
-                ? "bg-blue-50 text-blue-600 font-medium"
-                : "text-gray-600 hover:bg-gray-100"
-            )}
-          >
-            <div className="h-6 w-6 rounded-full bg-blue-100 flex items-center justify-center">
-              <FlaskConical className="h-3.5 w-3.5 text-blue-600" />
-            </div>
-            <span>Dispute Agent Eval</span>
           </Link>
           <Link
             to="/dataset"

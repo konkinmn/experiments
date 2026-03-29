@@ -11,11 +11,14 @@ import type {
   CaseContext,
   DialogueMessage,
   HardGateSignals,
+  HardGateConfig,
   DisputeProfile,
   PlannerOutput,
   PipelineRunRow,
+  PipelineConfig,
   RiskLevel,
   RubricWeights,
+  RubricScoringRules,
   RunConfig,
 } from '../types/dispute-pipeline.js';
 
@@ -69,6 +72,44 @@ export const DEFAULT_RUBRIC_WEIGHTS: RubricWeights = {
   amber_threshold: 40,
 };
 
+export const DEFAULT_HARD_GATE_CONFIG: HardGateConfig = {
+  cifas: true,
+  confirmed_scammer: true,
+  account_not_active: true,
+  railsr_dispute_last_6_months: true,
+};
+
+export const DEFAULT_SCORING_RULES: RubricScoringRules = {
+  account_age: [
+    { min_days: 365, points: 20 },
+    { min_days: 180, points: 12 },
+    { min_days: 90, points: 5 },
+  ],
+  tier: { E: 10, D: 8, C: 5 },
+  money_maker_points: 15,
+  trust_score: { GREEN: 8, AMBER: 4 },
+  tx_activity: { min_count: 5, points: 5 },
+  dispute_history: [
+    { max_disputes: 0, points: 30 },
+    { max_disputes: 2, points: 15 },
+    { max_disputes: 4, points: 5 },
+  ],
+  recent_dispute_penalty: -5,
+  scam_victim_penalty: -5,
+  amount_brackets: [
+    { max_amount: 5, points: 20 },
+    { max_amount: 10, points: 14 },
+    { max_amount: 15, points: 9 },
+    { max_amount: 25, points: 5 },
+  ],
+};
+
+export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
+  hard_gates: DEFAULT_HARD_GATE_CONFIG,
+  rubric_weights: DEFAULT_RUBRIC_WEIGHTS,
+  scoring_rules: DEFAULT_SCORING_RULES,
+};
+
 interface RubricScoreResult {
   total: number;
   account_trust: number;
@@ -76,39 +117,41 @@ interface RubricScoreResult {
   transaction_risk: number;
 }
 
-function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights): RubricScoreResult {
+function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights, rules?: RubricScoringRules): RubricScoreResult {
   const w = weights ?? DEFAULT_RUBRIC_WEIGHTS;
+  const r = rules ?? DEFAULT_SCORING_RULES;
 
   // Category 1 — Account Trust
   let accountTrust = 0;
 
-  if (raw.account_age_days >= 365) accountTrust += 20;
-  else if (raw.account_age_days >= 180) accountTrust += 12;
-  else if (raw.account_age_days >= 90) accountTrust += 5;
+  // Account age (sorted desc by min_days)
+  const ageBracket = [...r.account_age].sort((a, b) => b.min_days - a.min_days).find((b) => raw.account_age_days >= b.min_days);
+  if (ageBracket) accountTrust += ageBracket.points;
 
+  // Tier
   const tier = raw.tier_name?.toUpperCase();
-  if (tier === 'E') accountTrust += 10;
-  else if (tier === 'D') accountTrust += 8;
-  else if (tier === 'C') accountTrust += 5;
+  if (tier && r.tier[tier]) accountTrust += r.tier[tier];
 
-  if (raw.is_money_maker) accountTrust += 15;
+  // Money maker
+  if (raw.is_money_maker) accountTrust += r.money_maker_points;
 
+  // Trust score
   const trust = raw.trust_score?.toUpperCase();
-  if (trust === 'GREEN') accountTrust += 8;
-  else if (trust === 'AMBER') accountTrust += 4;
+  if (trust && r.trust_score[trust]) accountTrust += r.trust_score[trust];
 
-  if (raw.tx_count_90_days >= 5) accountTrust += 5;
+  // Transaction activity
+  if (raw.tx_count_90_days >= r.tx_activity.min_count) accountTrust += r.tx_activity.points;
   accountTrust = Math.min(accountTrust, w.account_trust_max);
 
   // Category 2 — Dispute History
   let disputeHistory = 0;
 
-  if (raw.railsr_disputes_last_6_months === 0) disputeHistory += 30;
-  else if (raw.railsr_disputes_last_6_months <= 2) disputeHistory += 15;
-  else if (raw.railsr_disputes_last_6_months <= 4) disputeHistory += 5;
+  // Dispute count brackets (sorted asc by max_disputes)
+  const histBracket = [...r.dispute_history].sort((a, b) => a.max_disputes - b.max_disputes).find((b) => raw.railsr_disputes_last_6_months <= b.max_disputes);
+  if (histBracket) disputeHistory += histBracket.points;
 
-  if (raw.railsr_disputes_last_30_days > 0) disputeHistory -= 5;
-  if (raw.scam_victim_count > 0) disputeHistory -= 5;
+  if (raw.railsr_disputes_last_30_days > 0) disputeHistory += r.recent_dispute_penalty;
+  if (raw.scam_victim_count > 0) disputeHistory += r.scam_victim_penalty;
   disputeHistory = Math.max(disputeHistory, 0);
   disputeHistory = Math.min(disputeHistory, w.dispute_history_max);
 
@@ -116,10 +159,9 @@ function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights): Rubri
   let transactionRisk = 0;
   const amount = Number(raw.max_transaction_amount);
   if (!isNaN(amount)) {
-    if (amount < 5) transactionRisk += 20;
-    else if (amount < 10) transactionRisk += 14;
-    else if (amount < 15) transactionRisk += 9;
-    else if (amount <= 25) transactionRisk += 5;
+    // Amount brackets (sorted asc by max_amount)
+    const amtBracket = [...r.amount_brackets].sort((a, b) => a.max_amount - b.max_amount).find((b) => amount < b.max_amount || (amount === b.max_amount && b === r.amount_brackets[r.amount_brackets.length - 1]));
+    if (amtBracket) transactionRisk += amtBracket.points;
   }
   transactionRisk = Math.min(transactionRisk, w.transaction_risk_max);
 
@@ -140,9 +182,9 @@ function deriveRiskLevel(hardGates: HardGateSignals, rubricScore: number, weight
   return 'red';
 }
 
-function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals, weights?: RubricWeights): DisputeProfile {
-  const rubric = computeRubricScore(raw, weights);
-  const riskLevel = deriveRiskLevel(hardGates, rubric.total, weights);
+function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals, config?: PipelineConfig): DisputeProfile {
+  const rubric = computeRubricScore(raw, config?.rubric_weights, config?.scoring_rules);
+  const riskLevel = deriveRiskLevel(hardGates, rubric.total, config?.rubric_weights);
 
   const riskFactors: string[] = [];
   if (raw.cifas_count > 0) riskFactors.push('CIFAS marker present');
@@ -179,11 +221,12 @@ function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals, we
 
 // --- Layer 1: Hard gates ---
 
-function checkHardGates(gates: HardGateSignals): string | null {
-  if (gates.cifas) return 'cifas';
-  if (gates.confirmed_scammer) return 'confirmed_scammer';
-  if (gates.account_not_active) return 'account_not_active';
-  if (gates.railsr_dispute_last_6_months) return 'railsr_dispute_last_6_months';
+function checkHardGates(gates: HardGateSignals, gateConfig?: HardGateConfig): string | null {
+  const cfg = gateConfig ?? DEFAULT_HARD_GATE_CONFIG;
+  if (cfg.cifas && gates.cifas) return 'cifas';
+  if (cfg.confirmed_scammer && gates.confirmed_scammer) return 'confirmed_scammer';
+  if (cfg.account_not_active && gates.account_not_active) return 'account_not_active';
+  if (cfg.railsr_dispute_last_6_months && gates.railsr_dispute_last_6_months) return 'railsr_dispute_last_6_months';
   return null;
 }
 
@@ -351,14 +394,20 @@ interface EnrichmentData {
 async function callPlanner(
   profile: DisputeProfile,
   rawSignals: CaseSignalsRaw,
-  caseDetails: { artifacts: unknown[] } | null,
+  caseDetails: Record<string, unknown> | null,
   enrichment: EnrichmentData,
-  options?: { model?: string; promptVersion?: string },
+  options?: { model?: string; promptVersion?: string; promptContent?: string },
 ): Promise<{ output: PlannerOutput; rawResponse: string; plannerRequest: Record<string, unknown>; systemPrompt: string }> {
-  const promptId = options?.promptVersion || PROMPT_ID;
-  const prompt = await getPromptById(promptId);
-  if (!prompt) {
-    throw new Error(`Prompt ${promptId} not found`);
+  let promptText: string;
+  if (options?.promptContent) {
+    promptText = options.promptContent;
+  } else {
+    const promptId = options?.promptVersion || PROMPT_ID;
+    const prompt = await getPromptById(promptId);
+    if (!prompt) {
+      throw new Error(`Prompt ${promptId} not found`);
+    }
+    promptText = prompt.content;
   }
 
   // Build text payload with three enrichment sections
@@ -372,7 +421,10 @@ async function callPlanner(
       railsr_disputes_last_30_days: rawSignals.railsr_disputes_last_30_days,
     },
     case_details: caseDetails
-      ? { artifacts: filterCaseArtifacts(caseDetails.artifacts) }
+      ? {
+          issue_type_id: (caseDetails as { issue_type_id?: string }).issue_type_id ?? null,
+          created_at: (caseDetails as { created_at?: string }).created_at ?? null,
+        }
       : null,
   };
 
@@ -401,7 +453,7 @@ async function callPlanner(
   }
 
   const plannerMessages = [
-    { role: 'system' as const, content: prompt.content },
+    { role: 'system' as const, content: promptText },
     { role: 'user' as const, content: JSON.stringify(signalsPayload, null, 2) },
   ];
   // Log planner request with customer dialogue content redacted to avoid PII in logs
@@ -432,7 +484,7 @@ async function callPlanner(
 
   try {
     const validated = PlannerOutputSchema.parse(parsed);
-    return { output: validated, rawResponse, plannerRequest: signalsPayload, systemPrompt: prompt.content };
+    return { output: validated, rawResponse, plannerRequest: signalsPayload, systemPrompt: promptText };
   } catch (zodErr) {
     throw Object.assign(
       zodErr instanceof Error ? zodErr : new Error(String(zodErr)),
@@ -540,12 +592,13 @@ export async function runDisputePipeline(
     ]);
   }
 
-  // Build dispute profile (use rubric weights from run config if provided)
+  // Build dispute profile (use pipeline config from run config if provided)
+  const pipelineConfig = runConfig?.pipeline_config;
   const hardGates = deriveHardGates(rawSignals);
-  const profile = buildDisputeProfile(rawSignals, hardGates, runConfig?.rubric_weights);
+  const profile = buildDisputeProfile(rawSignals, hardGates, pipelineConfig);
 
-  // Layer 1: Hard gates
-  const triggeredGate = checkHardGates(hardGates);
+  // Layer 1: Hard gates (respects gate toggles from config)
+  const triggeredGate = checkHardGates(hardGates, pipelineConfig?.hard_gates);
 
   let plannerOutput: PlannerOutput | null = null;
   let plannerRawResponse: string | null = null;
@@ -606,8 +659,11 @@ export async function runDisputePipeline(
     }
 
     // Layer 2: Planner
-    const detailsForPlanner = caseDetails && typeof caseDetails === 'object' && 'artifacts' in caseDetails
-      ? { artifacts: (caseDetails as { artifacts: unknown[] }).artifacts }
+    const detailsForPlanner = caseDetails && typeof caseDetails === 'object'
+      ? {
+          issue_type_id: (caseDetails as Record<string, unknown>).issue_type_id ?? null,
+          created_at: (caseDetails as Record<string, unknown>).created_at ?? null,
+        }
       : null;
     try {
       const result = await callPlanner(
@@ -615,7 +671,7 @@ export async function runDisputePipeline(
         rawSignals,
         detailsForPlanner,
         { caseActions, customerDialogueMessages, parsedFileDescriptions },
-        runConfig ? { model: runConfig.model, promptVersion: runConfig.prompt_version } : undefined,
+        runConfig ? { model: runConfig.model, promptVersion: runConfig.prompt_version, promptContent: runConfig.prompt_content } : undefined,
       );
       plannerOutput = result.output;
       plannerRawResponse = result.rawResponse;

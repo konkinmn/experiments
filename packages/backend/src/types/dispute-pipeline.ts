@@ -146,6 +146,77 @@ export interface PipelineRunInsert {
   enrichment_metadata: Record<string, unknown> | null;
 }
 
+// --- AI Iteration Artifact ---
+// Stable contract for what anna-case will receive as artifact_extra.
+// Pure projection of PipelineRunRow — no new storage, no duplication.
+
+export interface AIIterationArtifact {
+  version: '1.0';
+  dispute_profile: {
+    risk_level: RiskLevel;
+    rubric_score: number;
+    category_scores: {
+      account_trust: number;
+      dispute_history: number;
+      transaction_risk: number;
+    };
+    signals: CaseSignalsRaw;
+    risk_factors: string[];
+  };
+  hard_gate_result: {
+    passed: boolean;
+    triggered_gate: string | null;
+  };
+  planner_output: PlannerOutput | null;
+  enrichment: {
+    model: string;
+    prompt_version: string;
+    files_parsed: number;
+    files_failed: number;
+    dialogues_fetched: number;
+    dialogues_failed: number;
+    case_actions_count: number;
+    customer_messages_count: number;
+  };
+  executor_action: string;
+  pipeline_duration_ms: number;
+  created_at: string;
+  pipeline_run_id: number;
+}
+
+export function buildArtifactFromRun(row: PipelineRunRow): AIIterationArtifact {
+  const meta = (row.enrichment_metadata ?? {}) as Record<string, number | string>;
+  return {
+    version: '1.0',
+    dispute_profile: {
+      risk_level: row.dispute_profile.risk_level,
+      rubric_score: row.dispute_profile.rubric_score,
+      category_scores: row.dispute_profile.category_scores,
+      signals: row.raw_signals,
+      risk_factors: row.dispute_profile.risk_factors,
+    },
+    hard_gate_result: {
+      passed: !row.hard_gate_triggered,
+      triggered_gate: row.hard_gate_triggered,
+    },
+    planner_output: row.planner_output,
+    enrichment: {
+      model: (meta.model as string) ?? 'unknown',
+      prompt_version: row.prompt_version ?? 'unknown',
+      files_parsed: (meta.files_parsed as number) ?? 0,
+      files_failed: (meta.files_failed as number) ?? 0,
+      dialogues_fetched: (meta.dialogues_fetched as number) ?? 0,
+      dialogues_failed: (meta.dialogues_failed as number) ?? 0,
+      case_actions_count: row.case_actions?.length ?? 0,
+      customer_messages_count: row.dialogue_messages?.length ?? 0,
+    },
+    executor_action: row.executor_action,
+    pipeline_duration_ms: row.pipeline_duration_ms,
+    created_at: row.created_at,
+    pipeline_run_id: row.id,
+  };
+}
+
 // --- Pipeline Run Formatter ---
 
 export function formatPipelineRun(row: PipelineRunRow) {
@@ -172,10 +243,20 @@ export function formatPipelineRun(row: PipelineRunRow) {
     reviewerNotes: row.reviewer_notes,
     reviewedAt: row.reviewed_at,
     createdAt: row.created_at,
+    artifact: buildArtifactFromRun(row),
   };
 }
 
-// --- Dataset Run types ---
+// --- Pipeline Configuration ---
+// All hardcoded pipeline rules as a configurable object.
+// Defaults match current production behavior. Override per run to test variations.
+
+export interface HardGateConfig {
+  cifas: boolean;                 // default: true
+  confirmed_scammer: boolean;     // default: true
+  account_not_active: boolean;    // default: true
+  railsr_dispute_last_6_months: boolean; // default: true
+}
 
 export interface RubricWeights {
   account_trust_max: number;      // default 58
@@ -185,17 +266,50 @@ export interface RubricWeights {
   amber_threshold: number;        // default 40
 }
 
-export interface RunConfig {
-  model: string;                  // e.g. 'claude-sonnet-4-5@20250929'
-  prompt_version: string;         // e.g. 'dispute-planner-v1'
+export interface RubricScoringRules {
+  // Account age breakpoints: [threshold_days, points]
+  account_age: Array<{ min_days: number; points: number }>;
+  // Tier points: tier_name → points
+  tier: Record<string, number>;
+  // Money maker bonus
+  money_maker_points: number;
+  // Trust score points: score_level → points
+  trust_score: Record<string, number>;
+  // Transaction activity threshold
+  tx_activity: { min_count: number; points: number };
+  // Dispute history: [max_disputes_6m, points]
+  dispute_history: Array<{ max_disputes: number; points: number }>;
+  // Recent dispute penalty
+  recent_dispute_penalty: number;
+  // Scam victim penalty
+  scam_victim_penalty: number;
+  // Amount brackets: [max_amount, points]
+  amount_brackets: Array<{ max_amount: number; points: number }>;
+}
+
+export interface PipelineConfig {
+  hard_gates: HardGateConfig;
   rubric_weights: RubricWeights;
+  scoring_rules: RubricScoringRules;
+}
+
+// --- Dataset Run types ---
+
+export interface RunConfig {
+  model: string;                  // e.g. 'claude-sonnet-4-6'
+  prompt_version: string;         // e.g. 'dispute-planner-v1' or 'custom'
+  prompt_content?: string;        // full prompt text (stored per run for reproducibility)
+  pipeline_config: PipelineConfig; // full pipeline config (gates, weights, scoring rules)
   name: string;                   // human-readable run name
+  // Legacy field — kept for backward compatibility with existing runs
+  rubric_weights?: RubricWeights;
 }
 
 export interface DatasetRun {
   id: number;
   dataset_id: number;
   name: string;
+  description: string | null;
   config: RunConfig;
   status: 'pending' | 'running' | 'completed' | 'failed';
   created_at: string;

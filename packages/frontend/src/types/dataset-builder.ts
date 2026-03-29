@@ -1,4 +1,155 @@
-import type { PipelineResult, CaseSignalsRaw } from './rubric-tester';
+// --- Pipeline types (shared across dataset builder) ---
+
+export type RiskLevel = 'green' | 'amber' | 'red';
+
+export interface CaseSignalsRaw {
+  case_id: number;
+  company_id: number;
+  alias: string;
+  case_created_at: string;
+  total_amount: number;
+  max_transaction_amount: number;
+  merchants: string;
+  account_age_days: number;
+  account_status: string;
+  cifas_count: number;
+  tier_name: string | null;
+  is_money_maker: boolean;
+  trust_score: string | null;
+  scammer_count: number;
+  scam_victim_count: number;
+  tx_count_90_days: number;
+  active_months: number;
+  prior_payments_to_merchant: number;
+  railsr_disputes_last_6_months: number;
+  railsr_disputes_last_30_days: number;
+}
+
+export interface HardGateSignals {
+  cifas: boolean;
+  railsr_dispute_last_6_months: boolean;
+  confirmed_scammer: boolean;
+  account_not_active: boolean;
+}
+
+export interface DisputeProfile {
+  case_id: number;
+  alias: string;
+  company_id: number;
+  risk_level: RiskLevel;
+  total_amount: number;
+  max_transaction_amount: number;
+  merchants: string;
+  account_age_days: number;
+  account_status: string;
+  tier_name: string | null;
+  is_money_maker: boolean;
+  trust_score: string | null;
+  rubric_score: number;
+  category_scores: {
+    account_trust: number;
+    dispute_history: number;
+    transaction_risk: number;
+  };
+  risk_factors: string[];
+}
+
+export interface PlannerArgs {
+  is_dispute: false;
+  is_fraud: boolean;
+  credit_mode: 'IMMEDIATELY';
+  reason: string;
+  fraud_type?: string;
+  fraud_sub_type?: string;
+  crime_reference?: string;
+}
+
+export interface PlannerOutput {
+  thought: string;
+  decision: 'credit' | 'escalate_to_agent';
+  credit_timing: 'immediately' | 'none';
+  args?: PlannerArgs;
+  uncertainty_factors: string[];
+}
+
+export type PlannerDecision = PlannerOutput['decision'];
+
+// Stable contract for the AI iteration artifact (projection of pipeline run data)
+export interface AIIterationArtifact {
+  version: '1.0';
+  dispute_profile: {
+    risk_level: RiskLevel;
+    rubric_score: number;
+    category_scores: {
+      account_trust: number;
+      dispute_history: number;
+      transaction_risk: number;
+    };
+    signals: CaseSignalsRaw;
+    risk_factors: string[];
+  };
+  hard_gate_result: {
+    passed: boolean;
+    triggered_gate: string | null;
+  };
+  planner_output: PlannerOutput | null;
+  enrichment: {
+    model: string;
+    prompt_version: string;
+    files_parsed: number;
+    files_failed: number;
+    dialogues_fetched: number;
+    dialogues_failed: number;
+    case_actions_count: number;
+    customer_messages_count: number;
+  };
+  executor_action: string;
+  pipeline_duration_ms: number;
+  created_at: string;
+  pipeline_run_id: number;
+}
+
+export interface PipelineResult {
+  id: number;
+  caseId: number;
+  rawSignals: CaseSignalsRaw;
+  caseDetails: unknown | null;
+  disputeProfile: DisputeProfile;
+  hardGates: HardGateSignals;
+  hardGateTriggered: string | null;
+  plannerOutput: PlannerOutput | null;
+  executorAction: string;
+  pipelineDurationMs: number;
+  promptVersion: string | null;
+  plannerRawResponse: string | null;
+  plannerRequest: Record<string, unknown> | null;
+  plannerSystemPrompt: string | null;
+  fileParseResults: string[] | null;
+  dialogueMessages: Array<{ role: string; content: string; created_at: string }> | null;
+  enrichmentMetadata: {
+    dialogues_requested?: number;
+    dialogues_found?: number;
+    dialogues_with_messages?: number;
+    chat_fetch_failures?: Array<{
+      dialogue_id: number;
+      alias: string;
+      status: number;
+      error_body: string;
+    }>;
+    total_messages_fetched?: number;
+    customer_messages_filtered?: number;
+    customer_messages_sent_to_planner?: number;
+    file_artifacts_found?: number;
+    file_descriptions_parsed?: number;
+  } | null;
+  reviewerVerdict: 'correct' | 'incorrect' | null;
+  reviewerNotes: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  artifact: AIIterationArtifact;
+}
+
+// --- Dataset types ---
 
 export type DatasetLabel = 'credit' | 'escalate' | 'undecided';
 export type LabelConfidence = 'high' | 'medium' | 'low';
@@ -64,10 +215,36 @@ export interface RubricWeights {
   amber_threshold: number;
 }
 
+export interface HardGateConfig {
+  cifas: boolean;
+  confirmed_scammer: boolean;
+  account_not_active: boolean;
+  railsr_dispute_last_6_months: boolean;
+}
+
+export interface RubricScoringRules {
+  account_age: Array<{ min_days: number; points: number }>;
+  tier: Record<string, number>;
+  money_maker_points: number;
+  trust_score: Record<string, number>;
+  tx_activity: { min_count: number; points: number };
+  dispute_history: Array<{ max_disputes: number; points: number }>;
+  recent_dispute_penalty: number;
+  scam_victim_penalty: number;
+  amount_brackets: Array<{ max_amount: number; points: number }>;
+}
+
+export interface PipelineConfig {
+  hard_gates: HardGateConfig;
+  rubric_weights: RubricWeights;
+  scoring_rules: RubricScoringRules;
+}
+
 export interface RunConfig {
   model: string;
   prompt_version: string;
-  rubric_weights: RubricWeights;
+  prompt_content?: string;
+  pipeline_config: PipelineConfig;
   name: string;
 }
 
@@ -75,6 +252,7 @@ export interface DatasetRun {
   id: number;
   dataset_id: number;
   name: string;
+  description: string | null;
   config: RunConfig;
   status: 'pending' | 'running' | 'completed' | 'failed';
   created_at: string;
@@ -102,13 +280,17 @@ export interface DatasetRunCase {
   pipelineRunId: number | null;
   pipelineError: string | null;
   pipelineRun: PipelineResult | null;
+  datasetLabel: DatasetLabel | null;
+  datasetLabelNotes: string | null;
+  datasetLabelConfidence: string | null;
+  datasetManualTags: string[];
   agreement: boolean | null;
 }
 
 export interface RunOptions {
-  models: string[];
-  prompts: string[];
-  default_rubric: RubricWeights;
+  default_model: string;
+  default_prompt: { id: string; content: string };
+  default_pipeline_config: PipelineConfig;
 }
 
 // --- Analytics types ---

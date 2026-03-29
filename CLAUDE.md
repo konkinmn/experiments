@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Summary
 
-Monorepo with three experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis), a **Rubric Tester** (dispute pipeline evaluation), and a **Dataset Builder** (ground-truth eval dataset construction with labeling and stratified analytics). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
+Monorepo with two experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis) and a **Dataset Builder** (ground-truth eval dataset construction with labeling, pipeline runs, and stratified analytics). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
 
 ## Commands
 
@@ -40,10 +40,9 @@ No test framework is configured.
 - `src/routes/` — Route handlers:
   - `health.ts` — `GET /health`
   - `timeline-analyzer.ts` — `/api/timeline-analyzer` (prompts, start, status polling, cases)
-  - `dispute-pipeline.ts` — `/api/dispute-pipeline` (run, results, review)
-  - `dataset.ts` — `/api/datasets` (CRUD, labeling, runs, analytics, compare, compose)
+  - `dataset.ts` — `/api/datasets` (CRUD, labeling, runs, run-options, analytics, compare, compose, rename)
 - `src/services/` — Core business logic:
-  - `dispute-pipeline.ts` — 5-layer pipeline (signals → hard gates → planner → executor → verifier) + `fetchCaseContext()` for dataset context-only fetching
+  - `dispute-pipeline.ts` — 5-layer pipeline (signals → hard gates → planner → executor → verifier) + `fetchCaseContext()` for dataset context-only fetching. Exports `DEFAULT_PIPELINE_CONFIG` with all configurable defaults (hard gates, rubric weights, scoring rules).
   - `case-api.ts` — External API client (case details, artifacts, actions, dialogues)
   - `bigquery.ts` — BigQuery client for analytical signal queries
   - `signals-query.ts` — Signal-fetching SQL queries
@@ -52,13 +51,14 @@ No test framework is configured.
   - `dataset-segments.ts` — Custom SQL execution for dataset building (BigQuery)
   - `dataset-analytics.ts` — Stratified analytics computation (confusion matrix, agreement metrics, auto-tags)
   - `prompts.ts` — Loads prompt templates from `src/prompts/*.md`
-- `src/types/dispute-pipeline.ts` — Zod schemas and TypeScript types (RiskLevel, DisputeProfile, PlannerOutput, RunConfig, RubricWeights, etc.)
+- `src/types/dispute-pipeline.ts` — TypeScript types and Zod schemas: `RiskLevel`, `DisputeProfile`, `PlannerOutput`, `RunConfig`, `PipelineConfig` (with `HardGateConfig`, `RubricWeights`, `RubricScoringRules`), `AIIterationArtifact`, `buildArtifactFromRun()`, `formatPipelineRun()`, etc.
 
 ### Frontend (`packages/frontend`) — React 18, Vite 6, Tailwind CSS
 
-- `src/pages/` — Four main pages: `TimelineAnalyzer.tsx`, `RubricTester.tsx`, `DatasetBuilder.tsx`, `DatasetDetail.tsx`
-- `src/components/` — UI components organized by feature (`timeline-analyzer/`, `rubric-tester/`, `dataset-builder/`, `charts/`, `ui/`, `layout/`)
-- `src/hooks/` — React Query (TanStack Query) hooks for API calls + polling with setInterval
+- `src/pages/` — Three pages: `TimelineAnalyzer.tsx`, `DatasetBuilder.tsx`, `DatasetDetail.tsx`
+- `src/components/` — UI components organized by feature (`timeline-analyzer/`, `dataset-builder/`, `charts/`, `ui/`, `layout/`)
+- `src/hooks/` — `useTimelineAnalyzer.ts`, `useDatasetBuilder.ts` (React Query hooks), `useCaseFilters.ts` (filter/sort state)
+- `src/types/` — `timeline-analyzer.ts`, `dataset-builder.ts` (all pipeline + dataset types consolidated here)
 - `src/lib/` — API client, xlsx export, cn helper
 - Vite proxies `/api` requests to backend on port 3003
 - Uses path alias `@/` mapped to `src/`
@@ -67,20 +67,35 @@ No test framework is configured.
 ### Dispute Pipeline (5 layers)
 
 The core domain logic in `dispute-pipeline.ts`:
-1. **Layer 0** — Fetch signals from BigQuery, build dispute profile with rubric scoring (0-108 scale → green/amber/red)
-2. **Layer 1** — Hard gates: deterministic checks (CIFAS, scammer flag, account status, Railsr history) that force escalation
-3. **Layer 2** — Planner: LLM analyzes signals + artifacts + case actions + dialogue, outputs `credit` or `escalate_to_agent`
-4. **Layer 3** — Executor: submits TaskCreationRequest or escalation
-5. **Layer 4** — Verifier: audit log
+1. **Layer 0** — Fetch signals from BigQuery, build dispute profile with configurable rubric scoring (0–108 scale → green/amber/red)
+2. **Layer 1** — Hard gates: deterministic checks (CIFAS, scammer flag, account status, Railsr history) that force escalation. Each gate is toggleable per run via `HardGateConfig`.
+3. **Layer 2** — Planner: LLM analyzes signals + case metadata (issue_type_id, created_at) + case actions + dialogue + parsed file descriptions, outputs `credit` or `escalate_to_agent`
+4. **Layer 3** — Executor: currently shadow-only (no live actions)
+5. **Layer 4** — Audit log: full pipeline run persisted to `dispute_pipeline_runs`
+
+### Pipeline Configuration (`PipelineConfig`)
+
+All pipeline rules are configurable per dataset run via `PipelineConfig`:
+- **`hard_gates`**: Toggle each gate on/off (CIFAS, scammer, account inactive, Railsr). Defaults all on.
+- **`rubric_weights`**: Category maxes (account_trust: 58, dispute_history: 30, transaction_risk: 20) and thresholds (green: 70, amber: 40).
+- **`scoring_rules`**: All scoring breakpoints are editable — account age brackets, tier points, trust score points, money maker bonus, amount brackets, dispute history brackets, penalties. Defaults in `DEFAULT_SCORING_RULES`.
+
+Stored in `dataset_runs.config` JSONB per run for full reproducibility.
+
+### AI Iteration Artifact
+
+Each pipeline run produces an `AIIterationArtifact` — a structured projection of the run data (dispute profile, hard gate result, planner output, enrichment metadata). Generated by `buildArtifactFromRun()` in `types/dispute-pipeline.ts`. This is the stable contract for future integration with anna-case (WorkStation artifact system). No separate DB storage — it's a view over existing `dispute_pipeline_runs` columns.
 
 ### Dataset Builder Architecture
 
 Datasets are **pure ground truth** — case IDs + raw context data + human labels. No LLM pipeline runs on creation.
 
 - **Dataset creation**: Fetches context only (BigQuery signals + case details + artifacts via Gemini + dialogue). No LLM planner call. Concurrency limited to 3 parallel fetches.
-- **Dataset tab** (renamed from "Labels"): Shows raw signals and case context for unbiased labeling. No risk badges, no pipeline decisions.
-- **Runs**: Each run executes the full pipeline (profile + gates + planner) with a specific model/prompt/rubric config, using cached context from the dataset (no re-fetching from APIs). Supported models: `claude-sonnet-4-5@20250929`, `claude-sonnet-4-6`, `claude-opus-4-6`, `gemini-2.5-flash`.
+- **Dataset tab**: Shows raw signals and case context for unbiased labeling. No risk badges, no pipeline decisions. Supports labeling (credit/escalate/undecided), confidence, disagreement tracking, dual-labeling, manual tags.
+- **Runs**: Each run executes the full pipeline with a configurable `PipelineConfig` (model, prompt text, hard gate toggles, rubric weights, scoring rules), using cached context from the dataset. Default model from `LLM_MODEL` env var (fallback: `claude-sonnet-4-5@20250929`). Default prompt: `dispute-planner-v1`. Full prompt text + entire pipeline config stored per run. Runs can be renamed (double-click tab).
+- **Run tab UI**: Each case row shows two-column layout — Pipeline output (risk, decision, duration) vs Human Label (dataset label, confidence, tags, notes). Agreement badge (match/disagree) per case. No labeling on run tab — labels come from dataset tab.
 - **Analytics**: Requires a run selection. Computes confusion matrix, stratified metrics by risk/dispute type/hard gate/rubric bucket, inter-annotator agreement.
+- **Compare**: Side-by-side run comparison showing flipped cases (improved/regressed/changed), delta metrics.
 - **Refresh**: POST `/:id/refresh` re-fetches context for all cases if underlying data changed.
 
 ### Database
@@ -88,7 +103,8 @@ Datasets are **pure ground truth** — case IDs + raw context data + human label
 - PostgreSQL 16 (Docker Compose, port 5433, user/pass/db: `analytics`)
 - Tables: `analysis_jobs`, `dispute_pipeline_runs`, `datasets`, `dataset_cases`, `dataset_runs`, `dataset_run_cases`, `dataset_compositions`
 - `datasets` has `status` column ('loading' | 'ready') tracking context fetch progress
-- `dataset_cases` stores raw context (raw_signals, case_details, case_actions, dialogue_messages, file_parse_results, enrichment_metadata, context_fetched_at) + human labels
+- `dataset_cases` stores raw context (raw_signals, case_details, case_actions, dialogue_messages, file_parse_results, enrichment_metadata, context_fetched_at) + human labels + manual_tags
+- `dataset_runs.config` JSONB stores full `RunConfig` including `PipelineConfig` and `prompt_content`
 - Migrations: SQL files in `init-db/` (001–009) run on Docker init + runtime auto-migrations in `db.ts`
 - External volume: `anna-ws-analytics_pgdata`
 

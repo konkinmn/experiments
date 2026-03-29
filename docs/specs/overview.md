@@ -1,309 +1,254 @@
-# Dispute Agent — Overview & Architecture
+# Dispute Agent — System Overview
 
-## What this is
+## What This Is
 
-An AI agent that automates the job agents currently do before a dispute task is created in WorkStation. It does not touch the dispute lifecycle after task creation — the chargeback flow, Balance API, credit daemons, and Railsr interactions are already automated and stay untouched.
+An AI agent that automates dispute case triage at ANNA. It decides: **"Can this case be safely credited now, or should a human handle it?"**
 
-**The agent's job, in one sentence:** "Can this case be safely credited now, or should a human handle it?"
-
----
-
-## Why we're building it
+Currently running in **shadow mode** — the pipeline executes and logs decisions, but takes no live actions. The eval harness (Dataset Builder) measures accuracy before going live.
 
 **Q1 OKR:** 50% of eligible disputes resolved without human intervention.
 
-Currently every dispute — regardless of complexity — lands in an agent queue. The agent checks signals (account age, CIFAS, dispute history, tier, Money Maker status), reads the form, makes a judgment call, and submits a `TaskCreationRequest`. For straightforward low-risk cases this takes 15-20 minutes of agent time on a decision that was never in doubt.
-
-The agent is doing two jobs: pattern recognition on structured signals, and judgment on ambiguous cases. The first job should be automated. The second job should be supported, not replaced.
-
 ---
 
-## What the agent automates
-
-The agent replicates what a CX agent does manually:
-
-1. Pull account signals (CIFAS, age, tier, dispute history, Money Maker, trust score)
-2. Review the dispute form and any attached evidence files
-3. Assess risk level
-4. Either: submit `TaskCreationRequest` with correct parameters, ask for more evidence, or pass to a human with a summary
-
-Everything after `TaskCreationRequest` is submitted — chargeback lifecycle, credit timing, Balance API calls, Railsr — is unchanged.
-
----
-
-## Architecture — five layers
+## Architecture — Five Layers
 
 ```
 Dispute form submitted
         ↓
-Layer 0 — Signal fetch + dispute profile artifact
+Layer 0 — Signal fetch + dispute profile (configurable rubric scoring)
         ↓
-Layer 1 — Hard gates (deterministic, pre-LLM)
+Layer 1 — Hard gates (deterministic, pre-LLM, toggleable per run)
         ↓ (if clear)
-Layer 2 — Planner (LLM)
+Layer 2 — Planner (LLM, configurable model + prompt per run)
         ↓
-Layer 3 — Executor (deterministic)
+Layer 3 — Executor (shadow-only for now)
         ↓
-Layer 4 — Verifier + audit log
+Layer 4 — Audit log
 ```
 
-### Layer 0 — Signal fetch + dispute profile
+### Layer 0 — Signal Fetch + Dispute Profile
 
-On form submission, a dispute profile artifact is generated from BQ signals and saved to the case. This happens before the Planner fires.
+Fetches 15+ signals from BigQuery via a single CTE query and scores them on a **configurable rubric** (default max 108):
 
-The artifact is one source of truth for two audiences. Agents use it for quick scan — it replaces manual comment-writing. The Planner receives the same artifact as its structured context input. Both reason from identical information.
+| Category | Default Max | Key Factors |
+|----------|-------------|-------------|
+| Account Trust | 58 | Account age (up to 20), tier (up to 10), money maker badge (15), trust score (up to 8), activity (5) |
+| Dispute History | 30 | Clean 6-month history (up to 30), penalties for recent disputes (-5 each), scam victim (-5) |
+| Transaction Risk | 20 | Amount: <£5 → 20pts, £25+ → 0pts |
 
-It contains a risk level and the raw signal values:
+**Default thresholds:** Score >= 70 = green, 40–69 = amber, <40 = red.
 
-| Level | Meaning |
-|---|---|
-| 🟢 Green | Straightforward, low risk |
-| 🟡 Amber | One or more signals need attention |
-| 🔴 Red | High risk, requires careful handling |
+All scoring rules (breakpoints, point values, penalties) are configurable per run via `RubricScoringRules`. All signals are DB lookups — no hallucination risk on binary inputs.
 
-Risk level is derived from the rubric score (0–108). Green: score ≥ 70. Amber: score 40–69. Red: score < 40 or any hard gate signal present.
+### Layer 1 — Hard Gates
 
-All signals are DB lookups fetched via a single BQ query. None are LLM-derived. No hallucination risk on binary inputs. Full signal list and sources are in the Phase 1 spec.
+Run before LLM. If any enabled gate fires → immediate escalation, no LLM call.
 
----
+| Priority | Gate | Condition | Default |
+|----------|------|-----------|---------|
+| 1 | CIFAS hit | `cifas_count > 0` | On |
+| 2 | Confirmed scammer | `scammer_count > 0` | On |
+| 3 | Account inactive | `account_status !== ACCOUNT_IS_ACTIVE` | On |
+| 4 | Recent Railsr dispute | `railsr_disputes_last_6_months > 0` | On |
 
-### Layer 1 — Hard gates
-
-Run before LLM. If any gate fires: immediate `escalate_to_agent`, no scoring, no LLM call. Gates are evaluated in priority order — first hit wins, but all triggered flags are logged.
-
-| Priority | Gate | Condition | Flag |
-|---|---|---|---|
-| 1 | CIFAS hit | `cifas_count > 0` | `cifas` |
-| 2 | Confirmed scammer | `scammer_count > 0` | `confirmed_scammer` |
-| 3 | Account inactive | `account_status !== ACCOUNT_IS_ACTIVE` | `account_not_active` |
-| 4 | Recent Railsr dispute | `railsr_disputes_last_6_months > 0` | `railsr_dispute_last_6_months` |
-
-Note: CIFAS should eventually distinguish fraud victim markers from perpetrator markers. For now, all CIFAS hits → `escalate_to_agent`.
-
----
+Each gate can be toggled on/off per run via `HardGateConfig` — e.g., disable CIFAS to test impact on decisions.
 
 ### Layer 2 — Planner (LLM)
 
-Receives the dispute profile + filtered case artifacts. Outputs one of three decisions.
+Receives a context package and outputs a structured JSON decision.
 
-**Planner input includes:**
-- Dispute profile (rubric score, risk level, all account signals)
-- AI-extracted artifact descriptions (dispute form PDF and evidence screenshots — fetched, pre-parsed with Google Gemini, text summaries passed to Planner)
-- Selected raw signals (tx_count_90d, active_months, prior_payments_to_merchant, railsr_disputes_30d)
-- Case action metadata (structured records from case workflow — e.g. crime_ref_number from DISPUTE_FORM_FILLED)
-- Customer dialogue messages (customer-only chat messages, filtered and capped at last 50)
+**Input:**
+- Dispute profile (rubric score, risk level, all signals, risk factors)
+- Case metadata (issue_type_id, created_at)
+- Raw signals (tx_count_90d, active_months, prior_payments_to_merchant)
+- Case actions (DISPUTE_FORM_FILLED with crime_ref_number)
+- Customer dialogue messages (customer-only, last 50)
+- Artifact descriptions (PDFs/images pre-parsed with Google Gemini)
 
-**Data sources passed to Planner:**
-- `FILE` artifacts — customer-uploaded evidence (dispute form PDF, screenshots), pre-parsed with Google Gemini into text descriptions
-- `CASE_ACTION` data — fetched directly via Tasks API (`GET /api/workstation/case-actions?case_id={id}`), not from case artifacts. Structured metadata like `crime_ref_number` from `DISPUTE_FORM_FILLED` actions
-- `DIALOGUE` messages — dialogue artifact IDs are extracted from case artifacts, then customer messages are fetched via Tasks + Chat APIs. Agent/system/bot messages are filtered out. Capped at last 50 messages sorted by time
-
-All other artifact types (`AGENT_TASK`, `TRANSACTION`, `CALL`) are not passed to the Planner.
-
-**File fetch and parse flow:**
-```
-artifact.artifact_id
-        ↓
-GET https://file-share-ag.k1.anna.money/api/workstation/files/{artifact_id}
-        ↓
-response.data.path
-        ↓
-GET https://media.k1.anna.money{path}
-        ↓
-raw bytes → base64
-        ↓
-Pre-parse with Google Gemini (gemini-2.5-flash) via LLM proxy
-        ↓
-text description → included in Planner payload as artifact_descriptions
-```
-
-The LLM proxy does not support multimodal content for the Anthropic provider. Following the anna-gemma pattern, files are pre-parsed with Google Gemini into structured text descriptions, which are then included in the Planner's text payload. This two-step approach keeps file understanding (Gemini) separate from dispute reasoning (Claude). CASE_ACTION and DIALOGUE data are already structured text — they bypass Gemini entirely and go straight into the Planner payload.
-
-**Case action fetch flow:**
-```
-GET {TASKS_BASE_URL}/api/workstation/case-actions?case_id={caseId}
-        ↓
-response.data → CaseAction[]
-        ↓
-Passed to Planner as case_actions (action_type, status, created_at, metadata)
-```
-
-**Dialogue message fetch flow (3-step):**
-```
-DIALOGUE artifact IDs from case artifacts
-        ↓
-Step 1: GET {TASKS_BASE_URL}/api/v3/dialogues?id={ids} → get dialogue records + alias
-        ↓
-Step 2: GET {TASKS_BASE_URL}/api/v3/messages?dialogue_id={id} → get message IDs per dialogue
-        ↓
-Step 3: GET {CHAT_BASE_URL}/api/2/user/{alias}/messages?id[]={id1}&id[]={id2}... → get message content
-        ↓
-Filter: hidden messages removed, non-customer sender types (agent, system, annabot, bot, unknown) removed
-        ↓
-Sort by created_at, cap at last 50 → customer_dialogue_messages in Planner payload
-```
-
-**Planner output schema:**
-
+**Output:**
 ```typescript
 {
-  thought: string              // full reasoning chain — internal, not customer-facing
-  decision: "credit" | "request_evidence" | "escalate_to_agent"
-  credit_timing: "immediately" | "on_notification" | "on_win" | "none"
-  args?: TaskCreationRequest   // only populated when decision = "credit"
-  uncertainty_factors: string[] // what would change this decision; empty = no reservations
+  thought: string              // full reasoning chain
+  decision: "credit" | "escalate_to_agent"
+  credit_timing: "immediately" | "none"
+  args?: {                     // only when decision = "credit"
+    is_dispute: false
+    is_fraud: boolean
+    credit_mode: "IMMEDIATELY"
+    reason: "NOT_AUTHORISED" | "DIFFERENT_AMOUNT" | "DUPLICATE" | "NO_FUNDS_FROM_ATM" | "OTHER"
+    fraud_type?: FraudType
+    fraud_sub_type?: FraudSubType
+    crime_reference?: string
+  }
+  uncertainty_factors: string[]
 }
 ```
 
-**The three decisions:**
+**Key constraints:** Credit only if account 365+ days, amount <£25, clean profile, required info provided. When in doubt → escalate. Parse failure → auto-escalate.
 
-**`credit`** — case is ready to action. `args` maps directly to `POST /api/workstation/tasks` in anna-disputes:
+**Model and prompt are fully configurable per run** — default model from `LLM_MODEL` env var (fallback: `claude-sonnet-4-5@20250929`), default prompt: `dispute-planner-v1.md`. Both are editable free-text in the New Run modal. Full prompt text stored per run.
+
+### Layer 3 — Executor (Shadow Only)
+
+Currently hardcoded to `'shadow'`. No live actions. When enabled:
+- `credit` → POST `TaskCreationRequest` to anna-disputes API
+- `escalate_to_agent` → Create WorkStation task with summary
+
+### Layer 4 — Audit Log
+
+Every pipeline run is persisted to `dispute_pipeline_runs` with full context: signals, profile, planner request/response, system prompt, enrichment metadata.
+
+---
+
+## Pipeline Configuration (`PipelineConfig`)
+
+All pipeline rules are configurable per dataset run. The New Run modal shows defaults that can be edited:
 
 ```typescript
-{
-  is_dispute: boolean
-  is_fraud: boolean
-  credit_mode: "IMMEDIATELY" | "ON_CHARGEBACK_NOTIFICATION" | "ON_WIN" | "NO"
-  fraud_type?: FraudType
-  fraud_sub_type?: FraudSubType
-  reason: DisputeReason
-  crime_reference?: string
+interface PipelineConfig {
+  hard_gates: {
+    cifas: boolean;                    // default: true
+    confirmed_scammer: boolean;        // default: true
+    account_not_active: boolean;       // default: true
+    railsr_dispute_last_6_months: boolean; // default: true
+  };
+  rubric_weights: {
+    account_trust_max: number;         // default: 58
+    dispute_history_max: number;       // default: 30
+    transaction_risk_max: number;      // default: 20
+    green_threshold: number;           // default: 70
+    amber_threshold: number;           // default: 40
+  };
+  scoring_rules: {
+    account_age: Array<{ min_days: number; points: number }>;
+    tier: Record<string, number>;      // e.g. { E: 10, D: 8, C: 5 }
+    money_maker_points: number;        // default: 15
+    trust_score: Record<string, number>; // e.g. { GREEN: 8, AMBER: 4 }
+    tx_activity: { min_count: number; points: number };
+    dispute_history: Array<{ max_disputes: number; points: number }>;
+    recent_dispute_penalty: number;    // default: -5
+    scam_victim_penalty: number;       // default: -5
+    amount_brackets: Array<{ max_amount: number; points: number }>;
+  };
 }
 ```
 
-Covers both scopes:
-- Sub-£25 goodwill credits → `is_dispute=false`, `credit_mode=IMMEDIATELY`
-- £25+ formal disputes → `is_dispute=true`, full chargeback lifecycle
+The New Run modal shows a live "Max possible score" summary that updates as you change values.
 
-**`request_evidence`** — insufficient information to decide. Phase 1: escalate to agent with note "evidence needed." Future: send evidence form via Gemma, re-run pipeline when artifacts arrive.
-
-**`escalate_to_agent`** — complex case, policy edge, or blocked dependency. Planner generates a full case summary for the agent.
+Stored in `dataset_runs.config` JSONB alongside model, prompt text, and run name.
 
 ---
 
-### Layer 3 — Executor
+## AI Iteration Artifact
 
-Stateless. Receives `{decision, args}`. Executes exactly that. Makes zero decisions.
-
-| Decision | Action |
-|---|---|
-| `credit` | POST `TaskCreationRequest` to anna-disputes API |
-| `request_evidence` | Phase 1: escalate with note. Future: send Gemma instruction |
-| `escalate_to_agent` | Create WorkStation task with `thought` as agent summary |
-
-On failure: retry once with same idempotency key → if still failing, write to audit log with `executor_failure`, surface as alert, do not attempt again.
-
----
-
-### Layer 4 — Verifier + audit log
-
-Confirms action completed. Writes audit record.
-
-**Verification checks:**
-
-| Decision | Check |
-|---|---|
-| `credit` | Task created in anna-disputes, credit event queued |
-| `escalate_to_agent` | WorkStation task created, assigned to dispute queue |
-
-On verification failure: log, escalate with full context.
-
-**Audit record schema:**
+Each pipeline run produces an `AIIterationArtifact` — a structured projection of the run data via `buildArtifactFromRun()`. No separate DB storage (it's a view over existing columns). This is the stable contract for future anna-case integration:
 
 ```typescript
 {
-  case_id: number
-  timestamp: string
-  pipeline_run: number
-  gate_result: {
-    passed: boolean
-    triggered_gates: string[]
-  }
-  dispute_profile: DisputeProfile
-  planner_output: {
-    thought: string               // verbatim, internal
-    decision: string
-    credit_timing: string
-    args?: object
-    uncertainty_factors: string[]
-  }
-  executor_result: {
-    success: boolean
-    action_taken: string
-    error?: string
-  }
-  verifier_result: {
-    success: boolean
-    error?: string
-  }
-  final_decision: string
-  decision_type: "hard_gate" | "llm"
+  version: '1.0',
+  dispute_profile: { risk_level, rubric_score, category_scores, signals, risk_factors },
+  hard_gate_result: { passed, triggered_gate },
+  planner_output: { thought, decision, credit_timing, args, uncertainty_factors } | null,
+  enrichment: { model, prompt_version, files_parsed, dialogues_fetched, ... },
+  executor_action, pipeline_duration_ms, created_at, pipeline_run_id
 }
 ```
 
-`thought` is internal reasoning only. Regulatory-facing rationale is a separate controlled field added in Phase 3.
+When ready for WorkStation: attach as `artifact_type: 'AI_ITERATION'`, `artifact_extra: buildArtifactFromRun(row)`.
 
 ---
 
-## Evidence handling
+## Dataset Builder
 
-When evidence is requested and the customer responds, the same pipeline runs again on the same case with evidence artifacts as additional context.
+The evaluation harness. Datasets are **pure ground truth** — case IDs + cached context + human labels. No LLM runs on creation.
 
-State gate:
+### Workflow
+
+1. **Build dataset** — paste case IDs or run BigQuery SQL (max 100/500). System fetches and caches all context (signals, details, actions, dialogue, parsed files). This snapshot is reused across all runs.
+
+2. **Label** — reviewers see raw signals and context (no pipeline output, to avoid bias). Label: credit / escalate / undecided. Record confidence + disagreement reasons. Add manual tags. Supports dual-labeling for inter-annotator agreement.
+
+3. **Run experiments** — execute pipeline against dataset with full configuration:
+   - Model (free-text, default from `LLM_MODEL` env)
+   - Prompt (full editable text, default: `dispute-planner-v1`)
+   - Hard gate toggles (on/off per gate)
+   - Rubric weights + thresholds
+   - Scoring rules (all breakpoints editable)
+   - Full config stored per run for reproducibility
+   - Runs can be renamed (double-click tab name)
+
+4. **Review** — run tab shows two-column case rows: Pipeline output (risk, decision, duration) vs Human Label (dataset label, confidence, tags, notes). Agreement badge (match/disagree) per case. Prompt text viewable per run.
+
+5. **Analyze** — confusion matrix, stratified metrics (by risk level, dispute type, hard gate, rubric bucket, label confidence), inter-annotator agreement (Cohen's kappa), disagreement breakdown.
+
+6. **Compare** — side-by-side run comparison showing flipped cases (improved/regressed/changed), delta metrics.
+
+7. **Iterate** — compose datasets (merge + deduplicate), refresh context, export to Excel.
+
+### Database Schema
+
 ```
-No evidence artifacts → run Planner normally
-Evidence artifacts present → run Planner with artifacts as additional context
+datasets → dataset_cases (1:many, with context + labels + manual_tags)
+         → dataset_runs (1:many, with config JSONB including PipelineConfig + prompt_content)
+              → dataset_run_cases (1:many, links to dispute_pipeline_runs, carries dataset_label for comparison)
+
+dataset_compositions (self-join for merged datasets)
 ```
 
-Pipeline never re-runs while waiting. Re-trigger on evidence form submission only.
+---
 
-Phase 1: evidence request → escalate to agent with note. Evidence loop built in Phase 3.
+## Narrow Live Cohort (Phase 1 Target)
+
+Only cases matching ALL criteria qualify for live credit:
+
+| Signal | Condition |
+|--------|-----------|
+| Risk profile | Green (rubric score >= 70) |
+| Hard gates | All clear |
+| Account age | >= 365 days |
+| CIFAS | 0 |
+| Railsr disputes (6m) | 0 |
+| Transaction amount | <= £25 |
+| is_dispute | false (goodwill credit only) |
+| Planner decision | credit with credit_timing=immediately |
+| Planner uncertainty | Empty uncertainty_factors |
+
+**Success criteria:** >= 95% credit precision, >= 90% escalate recall, 100% hard gate accuracy. Minimum 30 shadow cases reviewed before going live.
 
 ---
 
-## Artifact type reference
+## External Dependencies
 
-All artifact types found on dispute cases:
-
-| Type | What it is | Planner sees it |
-|---|---|---|
-| `DISPUTE_FORM` | Dispute form metadata (lives on disputes service, not file-share) | No |
-| `FILE` | Customer-uploaded evidence (dispute form PDF, screenshots) | Yes |
-| `TRANSACTION` | Linked transaction records | No — already in BQ signals |
-| `DIALOGUE` | Chat transcripts | Yes — customer messages only (agent/system filtered out, last 50) |
-| `AGENT_TASK` | Linked agent tasks | No — reveals resolution history |
-| `CASE_ACTION` | Case workflow actions | Yes — structured metadata (crime_ref_number, etc.) |
-| `CALL` | Call recordings/logs | No — not parseable |
+| Service | What It Provides |
+|---------|-----------------|
+| **BigQuery** | Account/transaction/dispute signals |
+| **case-ag** | Case details (issue_type_id, created_at), artifacts |
+| **file-share-ag + media** | Document downloads (PDFs, images) → Gemini parsing |
+| **tasks** | Case actions, dispute forms |
+| **chat** | Customer dialogue messages |
+| **llm-proxy** | Claude + Gemini API access |
+| **PostgreSQL** | Local state (datasets, labels, runs, pipeline results) |
 
 ---
 
-## What is explicitly out of scope — forever
+## What's Built vs What's Not
 
-- Chargeback lifecycle management (already automated in anna-disputes)
-- Balance API credit execution (daemon-owned)
-- Auto-deny (hard gates escalate, never deny)
-- Customer-facing LLM output (Gemma is the customer interface)
-
----
-
-## Key constraints
-
-**FCA auditability:** Every decision produces a full audit record. `thought` is logged verbatim. `decision_type` distinguishes hard gate from LLM decisions. Regulatory rationale is templated separately from Phase 3.
-
-**No hallucination on binary signals:** CIFAS, account status, dispute history are DB lookups. LLM never derives these values.
-
-**Cost efficiency:** LLM fires only on cases that clear hard gates. Hard cases escalate immediately.
-
-**Idempotency:** `TaskCreationRequest` calls use idempotency keys. Duplicate submissions are blocked at the anna-disputes layer.
-
----
-
-## Phase map
-
-| Phase | Scope | Live actions |
-|---|---|---|
-| 1 | Shadow mode + dispute profile + narrow live credit | Immediate credit (low-risk cohort only) |
-| 2 | Agent summaries for all non-credit cases | Escalate with LLM summary |
-| 3 | Evidence request automation + regulatory rationale | Request evidence via Gemma |
-| 4 | Railsr / chargeback automation | Submit to Railsr |
-| 5 | Evidence re-entry loop | Full stateful evidence workflow |
+| Component | Status |
+|-----------|--------|
+| Signal fetch + configurable rubric scoring | Done |
+| Hard gates (4 checks, toggleable per run) | Done |
+| LLM Planner with full enrichment | Done |
+| Audit trail (DB persistence) | Done |
+| Dataset Builder (labeling, runs, analytics, comparison) | Done |
+| AI Iteration Artifact schema | Done |
+| Editable prompt/model per run | Done |
+| Full pipeline config per run (gates, weights, scoring rules) | Done |
+| Run tab with Pipeline vs Human Label comparison | Done |
+| Run rename | Done |
+| Dynamic max score calculator | Done |
+| Executor (live credit) | Not built |
+| Verifier (task creation check) | Not built |
+| Narrow cohort gate (code enforcement) | Not built |
+| anna-disputes API integration | Not built |
+| Event-driven trigger (form submission) | Not built |
+| Production Docker/CI | Not built |

@@ -456,6 +456,11 @@ function ContextCaseCard({
             ))}
           </div>
         )}
+        {dc.labelNotes && (
+          <div className="min-w-0 flex-1">
+            <span className="text-xs text-muted-foreground italic">{dc.labelNotes}</span>
+          </div>
+        )}
         {onDeleteCase && (
           <div className="ml-auto">
             <button
@@ -595,34 +600,14 @@ function DatasetCaseCard({
 }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
-      <div className="flex items-center gap-8 px-5 py-4">
-        <div className="min-w-0">
-          <span className="text-xs text-muted-foreground">Case</span>
+      <div className="px-5 py-4">
+        {/* Top: Case ID + actions */}
+        <div className="flex items-center justify-between mb-3">
           <p className="font-mono text-lg font-bold">
-            <a href={WS_CASE_URL(r.rawSignals.alias, dc.caseId)} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 hover:underline">{dc.caseId}</a>
+            <a href={WS_CASE_URL(r.rawSignals.alias, dc.caseId)} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 hover:underline">Case {dc.caseId}</a>
           </p>
-        </div>
-        <div>
-          <span className="text-xs text-muted-foreground">Risk</span>
-          <div className="mt-1"><Badge variant={risk.variant}>{risk.label}</Badge></div>
-        </div>
-        <div>
-          <span className="text-xs text-muted-foreground">Decision</span>
-          <div className="mt-1"><Badge variant={decision.variant as 'green' | 'amber' | 'red'}>{decision.label}</Badge></div>
-        </div>
-        <div>
-          <span className="text-xs text-muted-foreground">Duration</span>
-          <p className="text-sm mt-1">{(r.pipelineDurationMs / 1000).toFixed(1)}s</p>
-        </div>
-        <div>
-          <span className="text-xs text-muted-foreground">Label</span>
-          <div className="mt-1">
-            {labelBadge ? <Badge variant={labelBadge.variant}>{labelBadge.label}</Badge> : <span className="text-sm text-muted-foreground">Pending</span>}
-          </div>
-        </div>
-        {agreementMap && (
-          <div className="ml-auto flex items-center gap-2">
-            {onRetryCase && (
+          <div className="flex items-center gap-2">
+            {agreementMap && onRetryCase && (
               <button
                 className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition-colors"
                 onClick={() => onRetryCase(dc.id)}
@@ -632,18 +617,55 @@ function DatasetCaseCard({
                 <RefreshCw className={`h-4 w-4 ${retryingCaseIds?.has(dc.id) ? 'animate-spin text-blue-600' : ''}`} />
               </button>
             )}
-            {agreementMap[dc.id] === true && <div className="h-7 w-7 rounded-full bg-green-100 flex items-center justify-center" title="Agrees"><Check className="h-4 w-4 text-green-600" /></div>}
-            {agreementMap[dc.id] === false && <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center" title="Disagrees"><X className="h-4 w-4 text-red-600" /></div>}
-            {agreementMap[dc.id] == null && <div className="h-7 w-7 rounded-full bg-gray-100 flex items-center justify-center" title="No data"><span className="text-gray-400 text-sm">—</span></div>}
+            {agreementMap && agreementMap[dc.id] === true && <div className="h-7 w-7 rounded-full bg-green-100 flex items-center justify-center" title="Match"><Check className="h-4 w-4 text-green-600" /></div>}
+            {agreementMap && agreementMap[dc.id] === false && <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center" title="Disagree"><X className="h-4 w-4 text-red-600" /></div>}
+            {agreementMap && agreementMap[dc.id] == null && <div className="h-7 w-7 rounded-full bg-gray-100 flex items-center justify-center" title="No label"><span className="text-gray-400 text-sm">—</span></div>}
+            {!agreementMap && onDeleteCase && (
+              <button className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors" onClick={() => onDeleteCase(dc.id)}>
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
           </div>
-        )}
-        {!agreementMap && onDeleteCase && (
-          <div className="ml-auto">
-            <button className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-red-500 transition-colors" onClick={() => onDeleteCase(dc.id)}>
-              <Trash2 className="h-4 w-4" />
-            </button>
+        </div>
+
+        {/* Two columns: Pipeline vs Dataset */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Left: Pipeline output */}
+          <div className="rounded-md border border-gray-100 bg-gray-50 px-4 py-3">
+            <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-2">Pipeline</p>
+            <div className="flex items-center gap-4">
+              <div>
+                <span className="text-xs text-muted-foreground">Risk</span>
+                <div className="mt-0.5"><Badge variant={risk.variant}>{risk.label}</Badge></div>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Decision</span>
+                <div className="mt-0.5"><Badge variant={decision.variant as 'green' | 'amber' | 'red'}>{decision.label}</Badge></div>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Duration</span>
+                <p className="text-sm mt-0.5">{(r.pipelineDurationMs / 1000).toFixed(1)}s</p>
+              </div>
+            </div>
           </div>
-        )}
+
+          {/* Right: Dataset label */}
+          <div className="rounded-md border border-gray-100 bg-blue-50/50 px-4 py-3">
+            <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-2">Human Label</p>
+            <div className="flex items-center gap-3">
+              {labelBadge ? <Badge variant={labelBadge.variant}>{labelBadge.label}</Badge> : <span className="text-sm text-muted-foreground">Pending</span>}
+              {dc.labelConfidence && (
+                <span className="text-xs text-gray-500 capitalize">{dc.labelConfidence}</span>
+              )}
+              {dc.manualTags && dc.manualTags.length > 0 && dc.manualTags.map((tag) => (
+                <span key={tag} className="inline-flex items-center rounded-full bg-white border border-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-700">{tag}</span>
+              ))}
+            </div>
+            {dc.labelNotes && (
+              <p className="mt-2 text-sm text-gray-600">{dc.labelNotes}</p>
+            )}
+          </div>
+        </div>
       </div>
       <div className="border-t px-5 py-4">
         <ExpandedDetail
