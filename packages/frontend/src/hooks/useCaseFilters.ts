@@ -56,7 +56,13 @@ export function useCaseFilters(cases: DatasetCase[], mode: FilterMode = 'run'): 
       }
     }
 
-    if (sortOption === 'risk') {
+    if (sortOption === 'default') {
+      result = [...result].sort((a, b) => {
+        const aDate = String(a.rawSignals?.case_created_at ?? '');
+        const bDate = String(b.rawSignals?.case_created_at ?? '');
+        return bDate.localeCompare(aDate) || b.caseId - a.caseId;
+      });
+    } else if (sortOption === 'risk') {
       result = [...result].sort((a, b) => {
         const aRisk = RISK_ORDER[a.pipelineRun?.disputeProfile.risk_level ?? ''] ?? 3;
         const bRisk = RISK_ORDER[b.pipelineRun?.disputeProfile.risk_level ?? ''] ?? 3;

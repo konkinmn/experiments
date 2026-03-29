@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Download, Trash2, Loader2, Plus, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Download, Trash2, Loader2, Plus, RefreshCw, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { NewRunModal, AnalyticsTab, CaseFilterBar, CompareTab } from '@/componen
 import { useCaseFilters } from '@/hooks/useCaseFilters';
 import {
   useDataset,
+  useUpdateDataset,
   useLabelDatasetCase,
   useLabelRunCase,
   useDeleteDatasetCase,
@@ -18,6 +19,8 @@ import {
   useTagCase,
   useLabelDatasetCase2,
   useRefreshDataset,
+  useRetryRunCase,
+  useRerunDatasetRun,
 } from '@/hooks/useDatasetBuilder';
 import { downloadXlsx, type ColumnDef } from '@/lib/download-xlsx';
 import type { DatasetCase, DatasetLabel, DatasetRun } from '@/types';
@@ -57,9 +60,49 @@ export function DatasetDetail() {
   const tagCase = useTagCase();
   const labelCase2 = useLabelDatasetCase2();
   const refreshDataset = useRefreshDataset();
+  const updateDatasetMutation = useUpdateDataset();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('labels');
   const [showNewRunModal, setShowNewRunModal] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [nameValue, setNameValue] = useState('');
+  const [descValue, setDescValue] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const descInputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editingName) nameInputRef.current?.focus();
+  }, [editingName]);
+  useEffect(() => {
+    if (editingDesc) descInputRef.current?.focus();
+  }, [editingDesc]);
+
+  const startEditName = () => {
+    if (!dataset) return;
+    setNameValue(dataset.name);
+    setEditingName(true);
+  };
+  const saveName = () => {
+    const trimmed = nameValue.trim();
+    if (trimmed && dataset && trimmed !== dataset.name) {
+      updateDatasetMutation.mutate({ id: datasetId, name: trimmed });
+    }
+    setEditingName(false);
+  };
+  const startEditDesc = () => {
+    if (!dataset) return;
+    setDescValue(dataset.description ?? '');
+    setEditingDesc(true);
+  };
+  const saveDesc = () => {
+    if (!dataset) return;
+    const val = descValue.trim() || null;
+    if (val !== (dataset.description ?? null)) {
+      updateDatasetMutation.mutate({ id: datasetId, description: val ?? '' });
+    }
+    setEditingDesc(false);
+  };
 
   const summary = useMemo(() => {
     if (!dataset?.cases) return { total: 0, labeled: 0, credit: 0, escalate: 0, undecided: 0 };
@@ -144,9 +187,49 @@ export function DatasetDetail() {
               <ArrowLeft className="h-5 w-5 text-blue-600" />
             </Link>
             <div>
-              <h1 className="text-2xl font-semibold text-gray-900">{dataset.name}</h1>
-              {dataset.description && (
-                <p className="text-sm text-gray-500">{dataset.description}</p>
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  value={nameValue}
+                  onChange={(e) => setNameValue(e.target.value)}
+                  onBlur={saveName}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveName();
+                    if (e.key === 'Escape') setEditingName(false);
+                  }}
+                  className="text-2xl font-semibold text-gray-900 bg-white border border-blue-300 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-400 w-full max-w-md"
+                />
+              ) : (
+                <h1
+                  className="text-2xl font-semibold text-gray-900 group/name flex items-center gap-2 cursor-pointer"
+                  onClick={startEditName}
+                >
+                  {dataset.name}
+                  <Pencil className="h-4 w-4 text-gray-400 opacity-0 group-hover/name:opacity-100 transition-opacity" />
+                </h1>
+              )}
+              {editingDesc ? (
+                <textarea
+                  ref={descInputRef}
+                  value={descValue}
+                  onChange={(e) => setDescValue(e.target.value)}
+                  onBlur={saveDesc}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveDesc(); }
+                    if (e.key === 'Escape') setEditingDesc(false);
+                  }}
+                  rows={3  }
+                  className="text-sm text-gray-500 bg-white border border-blue-300 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-400 w-full max-w-lg resize-none mt-0.5"
+                  placeholder="Add description..."
+                />
+              ) : (
+                <p
+                  className="text-sm text-gray-500 group/desc flex items-center gap-1.5 cursor-pointer mt-0.5"
+                  onClick={startEditDesc}
+                >
+                  {dataset.description || <span className="italic text-gray-400">Add description...</span>}
+                  <Pencil className="h-3 w-3 text-gray-400 opacity-0 group-hover/desc:opacity-100 transition-opacity" />
+                </p>
               )}
               {dataset.sourceType === 'custom_sql' && typeof dataset.sourceConfig.sql === 'string' && (
                 <pre className="mt-2 text-xs text-gray-500 bg-gray-100 rounded px-3 py-2 overflow-x-auto max-w-2xl whitespace-pre-wrap font-mono">
@@ -297,6 +380,14 @@ function LabelsTab({
 }) {
   const filters = useCaseFilters(dataset.cases, 'dataset');
 
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of dataset.cases) {
+      for (const t of c.manualTags) set.add(t);
+    }
+    return [...set].sort();
+  }, [dataset.cases]);
+
   return (
     <div className="space-y-6">
       {dataset.cases.length > 0 && (
@@ -352,6 +443,7 @@ function LabelsTab({
         onDeleteCase={onDeleteCase}
         onTagCase={onTagCase}
         onDatasetLabel2={onLabel2}
+        tagSuggestions={allTags}
       />
     </div>
   );
@@ -364,9 +456,32 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
     polling: isActive,
   });
   const labelRunCase = useLabelRunCase();
+  const retryRunCase = useRetryRunCase();
+  const rerunAll = useRerunDatasetRun();
+  const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
 
   const handleRunLabel = (runCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => {
     labelRunCase.mutate({ id: runCaseId, label, notes: notes ?? null, labeledBy: null, confidence, disagreementReason, disagreementNotes });
+  };
+
+  const handleRetryCase = (runCaseId: number) => {
+    setRetryingIds((prev) => new Set(prev).add(runCaseId));
+    retryRunCase.mutate(runCaseId, {
+      onSettled: () => {
+        setRetryingIds((prev) => { const next = new Set(prev); next.delete(runCaseId); return next; });
+      },
+    });
+  };
+
+  const failedCaseIds = useMemo(() => {
+    if (!runCases) return [];
+    return runCases.filter((rc) => rc.pipelineError).map((rc) => rc.id);
+  }, [runCases]);
+
+  const handleRetryAllFailed = () => {
+    for (const id of failedCaseIds) {
+      handleRetryCase(id);
+    }
   };
 
   const mappedCases: DatasetCase[] = useMemo(() => {
@@ -436,10 +551,36 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
       {/* Run metrics header */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex items-center gap-4 mb-4 text-sm text-muted-foreground">
-            <span>Model: <span className="font-medium text-gray-900">{run.config.model}</span></span>
-            <span>Prompt: <span className="font-medium text-gray-900">{run.config.prompt_version}</span></span>
-            <span>Status: <RunStatusBadge status={run.status} /></span>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <span>Model: <span className="font-medium text-gray-900">{run.config.model}</span></span>
+              <span>Prompt: <span className="font-medium text-gray-900">{run.config.prompt_version}</span></span>
+              <span>Status: <RunStatusBadge status={run.status} /></span>
+            </div>
+            {!isActive && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => rerunAll.mutate(run.id)}
+                  disabled={rerunAll.isPending}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${rerunAll.isPending ? 'animate-spin' : ''}`} />
+                  Rerun all
+                </Button>
+                {failedCaseIds.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRetryAllFailed}
+                    disabled={retryingIds.size > 0}
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${retryingIds.size > 0 ? 'animate-spin' : ''}`} />
+                    Retry failed ({failedCaseIds.length})
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
           {isActive && (
             <div className="mb-4">
@@ -546,6 +687,8 @@ function RunTab({ run, datasetId }: { run: DatasetRun; datasetId: number }) {
         datasetCases={filters.filteredCases}
         onDatasetLabel={handleRunLabel}
         agreementMap={agreementMap}
+        onRetryCase={handleRetryCase}
+        retryingCaseIds={retryingIds}
       />
     </div>
   );

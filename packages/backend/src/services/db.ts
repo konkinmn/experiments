@@ -670,6 +670,20 @@ export async function getDataset(id: number): Promise<DatasetRow | null> {
   return rows[0] ?? null;
 }
 
+export async function updateDataset(
+  id: number,
+  name: string,
+  description: string | null,
+): Promise<DatasetRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetRow>(
+    `UPDATE datasets SET name = $1, description = $2 WHERE id = $3 RETURNING *`,
+    [name, description, id],
+  );
+  return rows[0] ?? null;
+}
+
 export async function deleteDataset(id: number): Promise<number> {
   await ensureMigrations();
   const pool = getPool();
@@ -923,6 +937,16 @@ export async function insertDatasetRun(
   };
 }
 
+export async function getDatasetRun(runId: number): Promise<DatasetRunRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<DatasetRunRow>(
+    `SELECT * FROM dataset_runs WHERE id = $1`,
+    [runId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function insertDatasetRunCases(
   runId: number,
   datasetCaseIds: number[],
@@ -956,9 +980,42 @@ export async function updateDatasetRunCaseResult(
   await ensureMigrations();
   const pool = getPool();
   await pool.query(
-    `UPDATE dataset_run_cases SET pipeline_run_id = $1 WHERE id = $2`,
+    `UPDATE dataset_run_cases SET pipeline_run_id = $1, pipeline_error = NULL WHERE id = $2`,
     [pipelineRunId, runCaseId],
   );
+}
+
+export async function getRunCaseWithContext(runCaseId: number): Promise<{
+  id: number;
+  run_id: number;
+  dataset_case_id: number;
+  case_id: number;
+  pipeline_run_id: number | null;
+  pipeline_error: string | null;
+  config: RunConfig;
+  dataset_id: number;
+} | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<{
+    id: number;
+    run_id: number;
+    dataset_case_id: number;
+    case_id: number;
+    pipeline_run_id: number | null;
+    pipeline_error: string | null;
+    config: RunConfig;
+    dataset_id: number;
+  }>(
+    `SELECT rc.id, rc.run_id, rc.dataset_case_id, dc.case_id, rc.pipeline_run_id, rc.pipeline_error,
+            r.config, r.dataset_id
+     FROM dataset_run_cases rc
+     JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
+     JOIN dataset_runs r ON r.id = rc.run_id
+     WHERE rc.id = $1`,
+    [runCaseId],
+  );
+  return rows[0] ?? null;
 }
 
 export async function updateDatasetRunCaseError(

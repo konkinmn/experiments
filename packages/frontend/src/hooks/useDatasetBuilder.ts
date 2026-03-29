@@ -25,6 +25,18 @@ export function useCreateDataset() {
   });
 }
 
+export function useUpdateDataset() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { id: number; name?: string; description?: string }) =>
+      api.updateDataset(params.id, { name: params.name, description: params.description }),
+    onSuccess: (_data, params) => {
+      queryClient.invalidateQueries({ queryKey: ['dataset', params.id] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+    },
+  });
+}
+
 export function useDeleteDataset() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -92,6 +104,28 @@ export function useLabelRunCase() {
   return useMutation({
     mutationFn: ({ id, label, notes, labeledBy, confidence, disagreementReason, disagreementNotes }: { id: number; label: DatasetLabel; notes: string | null; labeledBy: string | null; confidence?: string | null; disagreementReason?: string | null; disagreementNotes?: string | null }) =>
       api.labelRunCase(id, label, notes, labeledBy, confidence, disagreementReason, disagreementNotes),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-run-cases'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });
+    },
+  });
+}
+
+export function useRetryRunCase() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runCaseId: number) => api.retryRunCase(runCaseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-run-cases'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });
+    },
+  });
+}
+
+export function useRerunDatasetRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: number) => api.rerunDatasetRun(runId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataset-run-cases'] });
       queryClient.invalidateQueries({ queryKey: ['dataset-runs'] });

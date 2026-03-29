@@ -105,6 +105,12 @@ export const api = {
   getDataset: (id: number) =>
     fetchApi<DatasetWithCases>(`/api/datasets/${id}`),
 
+  updateDataset: (id: number, data: { name?: string; description?: string }) =>
+    fetchApi<Dataset>(`/api/datasets/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   deleteDataset: (id: number) =>
     fetchApi<{ success: boolean }>(`/api/datasets/${id}`, {
       method: 'DELETE',
@@ -147,6 +153,16 @@ export const api = {
 
   getDatasetRunCases: (runId: number) =>
     fetchApi<{ data: DatasetRunCase[] }>(`/api/datasets/runs/${runId}/cases`),
+
+  retryRunCase: (runCaseId: number) =>
+    fetchApi<{ success: boolean }>(`/api/datasets/run-cases/${runCaseId}/retry`, {
+      method: 'POST',
+    }),
+
+  rerunDatasetRun: (runId: number) =>
+    fetchApi<{ success: boolean; rerunning: number }>(`/api/datasets/runs/${runId}/rerun`, {
+      method: 'POST',
+    }),
 
   // Dataset Analytics API
   getDatasetAnalytics: (datasetId: number, runId?: number) => {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Check, X, AlertTriangle, MessageSquare, FileText, Code, BookOpen, Terminal, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Check, X, AlertTriangle, MessageSquare, FileText, Code, BookOpen, Terminal, Loader2, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,12 @@ import type { PipelineResult, RiskLevel, CaseSignalsRaw, DatasetCase, DatasetLab
 
 const WS_CASE_URL = (alias: string, caseId: number) =>
   `https://chat-workstation.k1.anna.money/${alias}/tasks/cases?caseId=${caseId}`;
+
+function formatBqDate(val: unknown): string {
+  if (!val) return '—';
+  const s = typeof val === 'object' && val !== null && 'value' in val ? String((val as { value: unknown }).value) : String(val);
+  return s.slice(0, 10) || '—';
+}
 
 interface ResultsTableProps {
   results: PipelineResult[];
@@ -20,6 +26,9 @@ interface ResultsTableProps {
   onTagCase?: (datasetCaseId: number, tags: string[]) => void;
   onDatasetLabel2?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
   agreementMap?: Record<number, boolean | null>;
+  tagSuggestions?: string[];
+  onRetryCase?: (runCaseId: number) => void;
+  retryingCaseIds?: Set<number>;
 }
 
 const RISK_BADGE: Record<RiskLevel, { label: string; variant: 'green' | 'amber' | 'red' }> = {
@@ -191,7 +200,7 @@ const SIGNAL_GROUPS: { title: string; signals: { key: keyof CaseSignalsRaw; labe
   },
 ];
 
-export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, onTagCase, onDatasetLabel2, agreementMap }: ResultsTableProps) {
+export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, onTagCase, onDatasetLabel2, agreementMap, tagSuggestions, onRetryCase, retryingCaseIds }: ResultsTableProps) {
   if (verdictOptions === 'dataset') {
     const cases = datasetCases ?? [];
     if (cases.length === 0) {
@@ -244,7 +253,20 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
                 </div>
                 <div className="border-t px-5 py-4">
                   {isFailed ? (
-                    <p className="text-sm text-red-600">{dc.contextError || dc.pipelineError}</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-red-600">{dc.contextError || dc.pipelineError}</p>
+                      {dc.pipelineError && onRetryCase && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onRetryCase(dc.id)}
+                          disabled={retryingCaseIds?.has(dc.id)}
+                        >
+                          <RefreshCw className={`h-3 w-3 mr-1.5 ${retryingCaseIds?.has(dc.id) ? 'animate-spin' : ''}`} />
+                          Retry
+                        </Button>
+                      )}
+                    </div>
                   ) : (
                     <div className="space-y-3 animate-pulse">
                       <div className="h-4 bg-gray-200 rounded w-3/4" />
@@ -266,7 +288,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
               : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
             const labelBadge = dc.label ? LABEL_BADGE[dc.label] : null;
             // Fall through to the existing pipeline-based rendering below
-            return <DatasetCaseCard key={dc.id} dc={dc} r={r} risk={risk} decision={decision} labelBadge={labelBadge} onDatasetLabel={onDatasetLabel} onDeleteCase={onDeleteCase} onTagCase={onTagCase} onDatasetLabel2={onDatasetLabel2} agreementMap={agreementMap} />;
+            return <DatasetCaseCard key={dc.id} dc={dc} r={r} risk={risk} decision={decision} labelBadge={labelBadge} onDatasetLabel={onDatasetLabel} onDeleteCase={onDeleteCase} onTagCase={onTagCase} onDatasetLabel2={onDatasetLabel2} agreementMap={agreementMap} tagSuggestions={tagSuggestions} onRetryCase={onRetryCase} retryingCaseIds={retryingCaseIds} />;
           }
 
           // New: render context-only card (Dataset tab)
@@ -283,6 +305,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
               onDeleteCase={onDeleteCase}
               onTagCase={onTagCase}
               onDatasetLabel2={onDatasetLabel2}
+              tagSuggestions={tagSuggestions}
             />
           );
         })}
@@ -371,6 +394,7 @@ function ContextCaseCard({
   onDeleteCase,
   onTagCase,
   onDatasetLabel2,
+  tagSuggestions,
 }: {
   dc: DatasetCase;
   signals: CaseSignalsRaw;
@@ -379,6 +403,7 @@ function ContextCaseCard({
   onDeleteCase?: (id: number) => void;
   onTagCase?: (id: number, tags: string[]) => void;
   onDatasetLabel2?: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
+  tagSuggestions?: string[];
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -396,7 +421,7 @@ function ContextCaseCard({
         </div>
         <div>
           <span className="text-xs text-muted-foreground">Amount</span>
-          <p className="text-sm mt-1 font-medium">{typeof signals.total_amount === 'number' ? `£${signals.total_amount.toFixed(2)}` : '—'}</p>
+          <p className="text-sm mt-1 font-medium">{signals.total_amount != null ? `£${Number(signals.total_amount).toFixed(2)}` : '—'}</p>
         </div>
         <div>
           <span className="text-xs text-muted-foreground">Account Age</span>
@@ -411,6 +436,10 @@ function ContextCaseCard({
           <p className="text-sm mt-1">{signals.trust_score ?? '—'}</p>
         </div>
         <div>
+          <span className="text-xs text-muted-foreground">Case created at</span>
+          <p className="text-sm mt-1">{formatBqDate(signals.case_created_at)}</p>
+        </div>
+        <div>
           <span className="text-xs text-muted-foreground">Label</span>
           <div className="mt-1">
             {labelBadge ? (
@@ -420,6 +449,13 @@ function ContextCaseCard({
             )}
           </div>
         </div>
+        {dc.manualTags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {dc.manualTags.map((tag) => (
+              <Badge key={tag} variant="gray" className="text-xs">{tag}</Badge>
+            ))}
+          </div>
+        )}
         {onDeleteCase && (
           <div className="ml-auto">
             <button
@@ -518,6 +554,7 @@ function ContextCaseCard({
               datasetCaseId={dc.id}
               tags={dc.manualTags}
               onTagCase={onTagCase}
+              suggestions={tagSuggestions}
             />
           )}
         </div>
@@ -538,6 +575,9 @@ function DatasetCaseCard({
   onTagCase,
   onDatasetLabel2,
   agreementMap,
+  tagSuggestions,
+  onRetryCase,
+  retryingCaseIds,
 }: {
   dc: DatasetCase;
   r: PipelineResult;
@@ -549,6 +589,9 @@ function DatasetCaseCard({
   onTagCase?: (id: number, tags: string[]) => void;
   onDatasetLabel2?: (id: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
   agreementMap?: Record<number, boolean | null>;
+  tagSuggestions?: string[];
+  onRetryCase?: (id: number) => void;
+  retryingCaseIds?: Set<number>;
 }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
@@ -578,7 +621,17 @@ function DatasetCaseCard({
           </div>
         </div>
         {agreementMap && (
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {onRetryCase && (
+              <button
+                className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-blue-600 transition-colors"
+                onClick={() => onRetryCase(dc.id)}
+                disabled={retryingCaseIds?.has(dc.id)}
+                title="Rerun this case"
+              >
+                <RefreshCw className={`h-4 w-4 ${retryingCaseIds?.has(dc.id) ? 'animate-spin text-blue-600' : ''}`} />
+              </button>
+            )}
             {agreementMap[dc.id] === true && <div className="h-7 w-7 rounded-full bg-green-100 flex items-center justify-center" title="Agrees"><Check className="h-4 w-4 text-green-600" /></div>}
             {agreementMap[dc.id] === false && <div className="h-7 w-7 rounded-full bg-red-100 flex items-center justify-center" title="Disagrees"><X className="h-4 w-4 text-red-600" /></div>}
             {agreementMap[dc.id] == null && <div className="h-7 w-7 rounded-full bg-gray-100 flex items-center justify-center" title="No data"><span className="text-gray-400 text-sm">—</span></div>}
@@ -609,6 +662,7 @@ function DatasetCaseCard({
           onDatasetLabel={onDatasetLabel}
           onDatasetLabel2={onDatasetLabel2}
           onTagCase={onTagCase}
+          tagSuggestions={tagSuggestions}
         />
       </div>
     </div>
@@ -632,6 +686,7 @@ function ExpandedDetail({
   onDatasetLabel,
   onDatasetLabel2,
   onTagCase,
+  tagSuggestions,
 }: {
   result: PipelineResult;
   onReview?: (id: number, verdict: 'correct' | 'incorrect', notes?: string) => void;
@@ -649,6 +704,7 @@ function ExpandedDetail({
   onDatasetLabel?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => void;
   onDatasetLabel2?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
   onTagCase?: (datasetCaseId: number, tags: string[]) => void;
+  tagSuggestions?: string[];
 }) {
   const [reviewNotes, setReviewNotes] = useState(
     verdictOptions === 'dataset' ? (datasetLabelNotes ?? '') : (result.reviewerNotes ?? ''),
@@ -1014,9 +1070,10 @@ function ExpandedDetail({
               <X className="h-4 w-4 mr-1" />
               Incorrect
             </Button>
-            <Input
-              className="flex-1 max-w-sm"
+            <textarea
+              className="flex-1 max-w-sm rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground resize-y min-h-[36px]"
               placeholder="Notes (optional)"
+              rows={3  }
               value={reviewNotes}
               onChange={(e) => setReviewNotes(e.target.value)}
             />
@@ -1070,9 +1127,10 @@ function ExpandedDetail({
               <MessageSquare className="h-4 w-4 mr-1" />
               Can't decide yet
             </Button>
-            <Input
-              className="flex-1 max-w-sm"
+            <textarea
+              className="flex-1 max-w-sm rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground resize-y min-h-[36px]"
               placeholder="Notes (optional)"
+              rows={3  }
               value={reviewNotes}
               onChange={(e) => setReviewNotes(e.target.value)}
             />
@@ -1162,17 +1220,15 @@ function ExpandedDetail({
                 </button>
               </span>
             ))}
-            <Input
-              className="h-7 text-xs w-32"
-              placeholder="Add tag..."
+            <TagSuggestInput
               value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && tagInput.trim()) {
-                  const newTags = [...(datasetManualTags ?? []), tagInput.trim()];
-                  onTagCase(datasetCaseId, [...new Set(newTags)]);
-                  setTagInput('');
-                }
+              onChange={setTagInput}
+              suggestions={tagSuggestions}
+              existingTags={datasetManualTags ?? []}
+              onAdd={(tag) => {
+                const newTags = [...(datasetManualTags ?? []), tag];
+                onTagCase(datasetCaseId, [...new Set(newTags)]);
+                setTagInput('');
               }}
             />
           </div>
@@ -1224,9 +1280,10 @@ function ExpandedDetail({
                   <MessageSquare className="h-4 w-4 mr-1" />
                   Can't decide yet
                 </Button>
-                <Input
-                  className="flex-1 max-w-xs"
+                <textarea
+                  className="flex-1 max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground resize-y min-h-[36px]"
                   placeholder="Notes (optional)"
+                  rows={3  }
                   value={label2Notes}
                   onChange={(e) => setLabel2Notes(e.target.value)}
                 />
@@ -1334,12 +1391,13 @@ function DatasetLabelControls({
           <option value="low">Low</option>
         </Select>
       </div>
-      <Input
+      <textarea
         placeholder="Notes (optional)"
+        rows={3  }
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
         onBlur={() => { if (label) onLabel(datasetCaseId, label, notes || undefined, confidence || null); }}
-        className="text-sm"
+        className="rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground resize-y min-h-[36px] w-full"
       />
     </div>
   );
@@ -1398,23 +1456,86 @@ function DatasetLabel2Controls({
   );
 }
 
+function TagSuggestInput({
+  value,
+  onChange,
+  suggestions = [],
+  existingTags,
+  onAdd,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  suggestions?: string[];
+  existingTags: string[];
+  onAdd: (tag: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+
+  const filtered = value.trim()
+    ? suggestions.filter((s) => !existingTags.includes(s) && s.toLowerCase().includes(value.trim().toLowerCase()))
+    : suggestions.filter((s) => !existingTags.includes(s));
+
+  const showSuggestions = focused && filtered.length > 0;
+
+  return (
+    <div className="relative">
+      <Input
+        className="h-7 text-xs w-32"
+        placeholder="Add tag..."
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onAdd(value.trim()); }
+          if (e.key === 'Escape') onChange('');
+        }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+      />
+      {showSuggestions && (
+        <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto min-w-[160px]">
+          {filtered.map((s) => (
+            <button
+              key={s}
+              type="button"
+              className="block w-full text-left px-2 py-1 text-xs hover:bg-gray-100"
+              onMouseDown={(e) => { e.preventDefault(); onAdd(s); }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TagControls({
   datasetCaseId,
   tags,
   onTagCase,
+  suggestions = [],
 }: {
   datasetCaseId: number;
   tags: string[];
   onTagCase: (id: number, tags: string[]) => void;
+  suggestions?: string[];
 }) {
   const [newTag, setNewTag] = useState('');
+  const [focused, setFocused] = useState(false);
 
-  const addTag = () => {
-    if (newTag.trim() && !tags.includes(newTag.trim())) {
-      onTagCase(datasetCaseId, [...tags, newTag.trim()]);
-      setNewTag('');
+  const addTag = (value?: string) => {
+    const tag = (value ?? newTag).trim();
+    if (tag && !tags.includes(tag)) {
+      onTagCase(datasetCaseId, [...tags, tag]);
     }
+    setNewTag('');
   };
+
+  const filtered = newTag.trim()
+    ? suggestions.filter((s) => !tags.includes(s) && s.toLowerCase().includes(newTag.trim().toLowerCase()))
+    : suggestions.filter((s) => !tags.includes(s));
+
+  const showSuggestions = focused && filtered.length > 0;
 
   return (
     <div className="border-t pt-4 space-y-2">
@@ -1425,14 +1546,31 @@ function TagControls({
             {tag} <X className="h-3 w-3 ml-1" />
           </Badge>
         ))}
-        <Input
-          className="h-6 w-24 text-xs"
-          placeholder="+ tag"
-          value={newTag}
-          onChange={(e) => setNewTag(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') addTag(); }}
-          onBlur={addTag}
-        />
+        <div className="relative">
+          <Input
+            className="h-6 w-24 text-xs"
+            placeholder="+ tag"
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } if (e.key === 'Escape') setNewTag(''); }}
+            onFocus={() => setFocused(true)}
+            onBlur={() => { setTimeout(() => setFocused(false), 150); if (newTag.trim()) addTag(); }}
+          />
+          {showSuggestions && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto min-w-[160px]">
+              {filtered.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className="block w-full text-left px-2 py-1 text-xs hover:bg-gray-100"
+                  onMouseDown={(e) => { e.preventDefault(); addTag(s); }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

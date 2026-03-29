@@ -6,6 +6,7 @@ import {
   insertDatasetWithCases,
   listDatasets,
   getDataset,
+  updateDataset,
   deleteDataset,
   listDatasetCases,
   updateDatasetCaseLabel,
@@ -29,6 +30,8 @@ import {
   updateDatasetCaseContextError,
   updateDatasetStatus,
   getDatasetCaseContexts,
+  getRunCaseWithContext,
+  getDatasetRun,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
 import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig, CaseContext, CaseSignalsRaw, CaseAction, DialogueMessage } from '../types/dispute-pipeline.js';
@@ -293,6 +296,33 @@ export async function datasetRoutes(app: FastifyInstance) {
       cases: formattedCases,
     };
   });
+
+  // PATCH /:id — Update dataset name/description
+  app.patch<{ Params: { id: string }; Body: { name?: string; description?: string } }>(
+    '/:id',
+    async (request, reply) => {
+      const id = parseInt(request.params.id, 10);
+      if (isNaN(id)) {
+        return reply.status(400).send({ error: 'Invalid ID' });
+      }
+      const { name, description } = request.body ?? {};
+      if (name === undefined && description === undefined) {
+        return reply.status(400).send({ error: 'Provide name or description' });
+      }
+
+      const existing = await getDataset(id);
+      if (!existing) {
+        return reply.status(404).send({ error: 'Dataset not found' });
+      }
+
+      const updated = await updateDataset(
+        id,
+        name !== undefined ? name : existing.name,
+        description !== undefined ? description : existing.description,
+      );
+      return formatDataset(updated!);
+    },
+  );
 
   // DELETE /:id — Delete dataset and all its cases
   app.delete<{ Params: { id: string } }>('/:id', async (request, reply) => {
@@ -563,6 +593,106 @@ export async function datasetRoutes(app: FastifyInstance) {
       }
       throw error;
     }
+  });
+
+  // POST /run-cases/:id/retry — Retry a failed run case
+  app.post<{ Params: { id: string } }>('/run-cases/:id/retry', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+
+    const rc = await getRunCaseWithContext(id);
+    if (!rc) {
+      return reply.status(404).send({ error: 'Run case not found' });
+    }
+
+    // Build cached context from dataset_cases
+    const cachedContexts = await getDatasetCaseContexts(rc.dataset_id);
+    let cached: CaseContext | undefined;
+    for (const dc of cachedContexts) {
+      if (dc.case_id === rc.case_id && dc.raw_signals) {
+        cached = {
+          raw_signals: dc.raw_signals as CaseSignalsRaw,
+          case_details: dc.case_details ?? null,
+          case_actions: (dc.case_actions as CaseAction[] | null) ?? null,
+          dialogue_messages: (dc.dialogue_messages as DialogueMessage[] | null) ?? null,
+          file_parse_results: (dc.file_parse_results as string[] | null) ?? null,
+          enrichment_metadata: (dc.enrichment_metadata as Record<string, unknown> | null) ?? null,
+        };
+        break;
+      }
+    }
+
+    try {
+      const pipelineRun = await runDisputePipeline(rc.case_id, rc.config, cached);
+      await updateDatasetRunCaseResult(rc.id, pipelineRun.id);
+      return { success: true, pipelineRunId: pipelineRun.id };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await updateDatasetRunCaseError(rc.id, message).catch(() => {});
+      return reply.status(500).send({ error: message });
+    }
+  });
+
+  // POST /runs/:runId/rerun — Re-execute pipeline for all cases in a run
+  app.post<{ Params: { runId: string } }>('/runs/:runId/rerun', async (request, reply) => {
+    const runId = parseInt(request.params.runId, 10);
+    if (isNaN(runId)) {
+      return reply.status(400).send({ error: 'Invalid run ID' });
+    }
+
+    const run = await getDatasetRun(runId);
+    if (!run) {
+      return reply.status(404).send({ error: 'Run not found' });
+    }
+
+    const runConfig = run.config;
+
+    // Fetch cached contexts
+    const cachedContexts = await getDatasetCaseContexts(run.dataset_id);
+    const contextMap = new Map<number, CaseContext>();
+    for (const dc of cachedContexts) {
+      if (dc.raw_signals) {
+        contextMap.set(dc.case_id as number, {
+          raw_signals: dc.raw_signals as CaseSignalsRaw,
+          case_details: dc.case_details ?? null,
+          case_actions: (dc.case_actions as CaseAction[] | null) ?? null,
+          dialogue_messages: (dc.dialogue_messages as DialogueMessage[] | null) ?? null,
+          file_parse_results: (dc.file_parse_results as string[] | null) ?? null,
+          enrichment_metadata: (dc.enrichment_metadata as Record<string, unknown> | null) ?? null,
+        });
+      }
+    }
+
+    const cases = await getDatasetRunCases(runId);
+    await updateDatasetRunStatus(runId, 'running');
+
+    let failedCount = 0;
+    const tasks = cases.map((rc) => async () => {
+      try {
+        const cached = contextMap.get(rc.case_id);
+        const pipelineRun = await runDisputePipeline(rc.case_id, runConfig, cached);
+        await updateDatasetRunCaseResult(rc.id, pipelineRun.id);
+      } catch (error) {
+        failedCount++;
+        const message = error instanceof Error ? error.message : String(error);
+        app.log.error({ caseId: rc.case_id, runId, error }, 'Rerun pipeline failed for case');
+        await updateDatasetRunCaseError(rc.id, message).catch(() => {});
+      }
+    });
+
+    runWithConcurrency(tasks, 3)
+      .then(async () => {
+        const status = failedCount === cases.length ? 'failed' : 'completed';
+        await updateDatasetRunStatus(runId, status, new Date());
+      })
+      .catch(async (error) => {
+        app.log.error({ runId, error }, 'Rerun batch failed');
+        await updateDatasetRunStatus(runId, 'failed').catch(() => {});
+      });
+
+    return { success: true, rerunning: cases.length };
   });
 
   // --- Analytics ---
