@@ -154,7 +154,7 @@ check(
 check(
   'planner_output populated',
   result.planner_output != null,
-  `decision=${plannerOutput?.decision}, credit_timing=${plannerOutput?.credit_timing}`,
+  `decision=${plannerOutput?.decision}`,
 );
 check(
   'planner_raw_response populated',

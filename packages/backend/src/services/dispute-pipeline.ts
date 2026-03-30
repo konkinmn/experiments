@@ -268,14 +268,12 @@ const PlannerOutputSchema = z.discriminatedUnion('decision', [
   z.object({
     thought: z.string(),
     decision: z.literal('credit'),
-    credit_timing: z.literal('immediately'),
     args: PlannerArgsSchema,
     uncertainty_factors: z.array(z.string()),
   }),
   z.object({
     thought: z.string(),
     decision: z.literal('escalate_to_agent'),
-    credit_timing: z.literal('none'),
     args: z.undefined().optional(),
     uncertainty_factors: z.array(z.string()),
   }),
@@ -689,7 +687,6 @@ export async function runDisputePipeline(
       plannerOutput = {
         thought: `Planner error: ${errorMessage}`,
         decision: 'escalate_to_agent',
-        credit_timing: 'none',
         uncertainty_factors: ['planner_parse_error'],
       };
     }

@@ -87,7 +87,7 @@ Evidence automation stable. Regulatory rationale signed off by compliance.
 **Goal:** Wire formal dispute path. Planner can output `credit` with `is_dispute=true` and full chargeback lifecycle parameters.
 
 ### What expands
-- `credit_timing`: adds `on_notification`, `on_win` options
+- `args.credit_mode`: adds `ON_NOTIFICATION`, `ON_WIN` options alongside `IMMEDIATELY`
 - `args.is_dispute: true` with full chargeback parameters
 - Eligibility: transaction >= £25, Railsr-eligible type, crime reference present
 

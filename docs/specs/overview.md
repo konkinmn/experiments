@@ -70,7 +70,6 @@ Receives a context package and outputs a structured JSON decision.
 {
   thought: string              // full reasoning chain
   decision: "credit" | "escalate_to_agent"
-  credit_timing: "immediately" | "none"
   args?: {                     // only when decision = "credit"
     is_dispute: false
     is_fraud: boolean
@@ -148,7 +147,7 @@ Each pipeline run produces an `AIIterationArtifact` — a structured projection 
   version: '1.0',
   dispute_profile: { risk_level, rubric_score, category_scores, signals, risk_factors },
   hard_gate_result: { passed, triggered_gate },
-  planner_output: { thought, decision, credit_timing, args, uncertainty_factors } | null,
+  planner_output: { thought, decision, args, uncertainty_factors } | null,
   enrichment: { model, prompt_version, files_parsed, dialogues_fetched, ... },
   executor_action, pipeline_duration_ms, created_at, pipeline_run_id
 }
@@ -210,7 +209,7 @@ Only cases matching ALL criteria qualify for live credit:
 | Railsr disputes (6m) | 0 |
 | Transaction amount | <= £25 |
 | is_dispute | false (goodwill credit only) |
-| Planner decision | credit with credit_timing=immediately |
+| Planner decision | credit |
 | Planner uncertainty | Empty uncertainty_factors |
 
 **Success criteria:** >= 95% credit precision, >= 90% escalate recall, 100% hard gate accuracy. Minimum 30 shadow cases reviewed before going live.

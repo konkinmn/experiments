@@ -8,8 +8,8 @@ Dispute case triage is fully manual today. Every dispute — regardless of compl
 
 An AI dispute pipeline inside anna-case that automatically triages dispute cases. After the dispute form is received, the pipeline analyzes the case and makes a decision:
 
-- **Credit** — the case is low-risk and straightforward. The pipeline creates a dispute task pre-filled with its recommendation. A payment agent reviews and approves the credit. The AI never credits on its own.
-- **Escalate** — the case needs human judgement. The pipeline escalates the case to an agent with a structured summary of what it found, so the agent can start with context instead of from scratch.
+- **Credit** — the case is low-risk and straightforward. A payment agent reviews and approves the credit. The AI never credits on its own.
+- **Escalate** — the case needs human judgement. An agent picks it up with a structured summary from the AI, so they can start with context instead of from scratch.
 
 The pipeline has been prototyped and validated in a local test environment (`experiments` repo). This PRD covers what needs to be built in anna-case to bring it to production.
 
@@ -87,7 +87,7 @@ When a case has multiple AI iterations, the most recent is shown at the top, wit
 
 ### Hard Gates
 
-Each gate is toggleable per run. If any enabled gate fires, the pipeline skips the AI and escalates immediately.
+Hard gates, rubric weights, scoring breakpoints, and risk thresholds are all defined as constants in the codebase. They apply uniformly to every pipeline run — there is no per-run configuration. If any gate fires, the pipeline skips the AI and escalates immediately.
 
 | Gate | Condition | Signal |
 |------|-----------|--------|
@@ -152,7 +152,6 @@ The planner receives a JSON context package:
 {
   "thought": "full reasoning chain",
   "decision": "credit",
-  "credit_timing": "immediately",
   "args": {
     "is_dispute": false,
     "is_fraud": true,
@@ -172,7 +171,6 @@ The planner receives a JSON context package:
 {
   "thought": "full reasoning chain",
   "decision": "escalate_to_agent",
-  "credit_timing": "none",
   "uncertainty_factors": ["list of concerns"]
 }
 ```

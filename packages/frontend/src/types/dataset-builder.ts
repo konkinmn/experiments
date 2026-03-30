@@ -67,7 +67,6 @@ export interface PlannerArgs {
 export interface PlannerOutput {
   thought: string;
   decision: 'credit' | 'escalate_to_agent';
-  credit_timing: 'immediately' | 'none';
   args?: PlannerArgs;
   uncertainty_factors: string[];
 }

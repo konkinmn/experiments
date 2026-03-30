@@ -107,7 +107,6 @@ Respond with a single JSON object. No other text before or after.
 {
   "thought": "Full reasoning chain — why you're making this decision, what signals you weighed, what you considered. This is internal, not customer-facing.",
   "decision": "credit" | "escalate_to_agent",
-  "credit_timing": "immediately" | "none",
   "args": {
     "is_dispute": false,
     "is_fraud": boolean,
@@ -122,4 +121,3 @@ Respond with a single JSON object. No other text before or after.
 ```
 
 - `args` is only populated when `decision` = `"credit"`. Omit it entirely when escalating.
-- `credit_timing` = `"immediately"` when crediting, `"none"` when escalating.

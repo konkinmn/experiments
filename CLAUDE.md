@@ -29,6 +29,21 @@ npm run build -w packages/frontend # Frontend build (tsc -b && vite build)
 
 No test framework is configured.
 
+## Setup
+
+```bash
+npm install
+cp packages/backend/.env.example packages/backend/.env  # fill in values
+```
+
+## Ports
+
+| Service    | Port |
+|------------|------|
+| Frontend   | 5176 |
+| Backend    | 3003 |
+| PostgreSQL | 5433 |
+
 ## Prerequisites
 
 - Node.js 18+
@@ -66,6 +81,9 @@ No test framework is configured.
 - `src/hooks/` — `useTimelineAnalyzer.ts`, `useDatasetBuilder.ts` (React Query hooks), `useCaseFilters.ts` (filter/sort state)
 - `src/types/` — `timeline-analyzer.ts`, `dataset-builder.ts` (all pipeline + dataset types consolidated here)
 - `src/lib/` — API client, xlsx export, cn helper
+- UI primitives: Radix UI (dialog, slot) + class-variance-authority + tailwind-merge. Icons: lucide-react.
+- Charts: visx (axis, shape, scale, tooltip, responsive)
+- Data fetching: TanStack React Query v5. Routing: react-router-dom v7.
 - Vite proxies `/api` requests to backend on port 3003
 - Uses path alias `@/` mapped to `src/`
 - Env prefix: `API_` (variables exposed as `import.meta.env.API_*`)

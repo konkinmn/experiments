@@ -790,9 +790,6 @@ function ExpandedDetail({
               <Badge variant={result.plannerOutput.decision === 'credit' ? 'green' : 'amber'}>
                 {result.plannerOutput.decision === 'credit' ? 'Credit' : 'Escalate to Agent'}
               </Badge>
-              <span className="ml-2 text-sm text-muted-foreground">
-                timing: {result.plannerOutput.credit_timing}
-              </span>
             </div>
             {result.plannerOutput.args && (
               <div>
