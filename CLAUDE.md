@@ -29,6 +29,12 @@ npm run build -w packages/frontend # Frontend build (tsc -b && vite build)
 
 No test framework is configured.
 
+## Prerequisites
+
+- Node.js 18+
+- Docker (for PostgreSQL)
+- Google Cloud SDK with Application Default Credentials (for BigQuery)
+
 ## Architecture
 
 **npm workspaces monorepo** with two packages:
@@ -110,7 +116,7 @@ Datasets are **pure ground truth** — case IDs + raw context data + human label
 
 ### External APIs
 
-Backend calls several internal ANNA services (case-ag, file-share-ag, tasks, chat, llm-proxy) — URLs configured via environment variables. See `packages/backend/.env.example` for the full list. Key env vars: `GCP_PROJECT_ID`, `BIGQUERY_DATASET`, `LLM_PROVIDER`, `LLM_MODEL`, `API_TOKEN`.
+Backend calls several internal ANNA services (case-ag, file-share-ag, tasks, chat, llm-proxy) — URLs configured via environment variables. See `packages/backend/.env.example` for the full list. The backend loads `packages/backend/.env` first and falls back to a repo root `.env` if present. Key env vars: `GCP_PROJECT_ID`, `BIGQUERY_DATASET`, `LLM_PROVIDER`, `LLM_MODEL`, `API_TOKEN`.
 
 ## Key Conventions
 
