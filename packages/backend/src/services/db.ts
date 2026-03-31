@@ -396,6 +396,17 @@ async function applyMigrations(): Promise<void> {
       );
     }
 
+    // Migration 019: add action_note to dataset_run_cases
+    const { rows: actionNoteCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dataset_run_cases' AND column_name = 'action_note'`,
+    );
+    if (actionNoteCol.length === 0) {
+      await pool.query(
+        `ALTER TABLE dataset_run_cases ADD COLUMN IF NOT EXISTS action_note TEXT DEFAULT NULL`,
+      );
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -759,6 +770,19 @@ export async function updateDatasetRunCaseLabel(
   return rows[0] ?? null;
 }
 
+export async function updateRunCaseActionNote(
+  id: number,
+  actionNote: string | null,
+): Promise<boolean> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rowCount } = await pool.query(
+    `UPDATE dataset_run_cases SET action_note = $1 WHERE id = $2`,
+    [actionNote, id],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 export async function updateDatasetCasePipelineRun(
   id: number,
   pipelineRunId: number,
@@ -1064,26 +1088,27 @@ export async function listDatasetRuns(datasetId: number): Promise<DatasetRun[]> 
             COUNT(CASE WHEN rc.pipeline_run_id IS NOT NULL OR rc.pipeline_error IS NOT NULL THEN 1 END)::text AS completed_cases,
             ROUND(
               100.0 * SUM(CASE
-                WHEN rc.label = 'credit' AND pr.planner_output->>'decision' = 'credit' THEN 1
-                WHEN rc.label = 'escalate' AND pr.planner_output->>'decision' = 'escalate_to_agent' THEN 1
-                WHEN rc.label = 'escalate' AND pr.hard_gate_triggered IS NOT NULL THEN 1
+                WHEN dc.label = 'credit' AND pr.planner_output->>'decision' = 'credit' THEN 1
+                WHEN dc.label = 'escalate' AND pr.planner_output->>'decision' = 'escalate_to_agent' THEN 1
+                WHEN dc.label = 'escalate' AND pr.hard_gate_triggered IS NOT NULL THEN 1
                 ELSE 0
-              END) / NULLIF(COUNT(CASE WHEN rc.label IN ('credit','escalate') AND pr.id IS NOT NULL THEN 1 END), 0),
+              END) / NULLIF(COUNT(CASE WHEN dc.label IN ('credit','escalate') AND pr.id IS NOT NULL THEN 1 END), 0),
             1)::text AS agreement_rate,
             ROUND(
-              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label = 'credit' THEN 1 ELSE 0 END)
-              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
+              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label = 'credit' THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
             1)::text AS credit_precision,
             ROUND(
-              100.0 * SUM(CASE WHEN rc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
-              / NULLIF(SUM(CASE WHEN rc.label = 'escalate' AND pr.id IS NOT NULL THEN 1 ELSE 0 END), 0),
+              100.0 * SUM(CASE WHEN dc.label = 'escalate' AND (pr.planner_output->>'decision' = 'escalate_to_agent' OR pr.hard_gate_triggered IS NOT NULL) THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN dc.label = 'escalate' AND pr.id IS NOT NULL THEN 1 ELSE 0 END), 0),
             1)::text AS escalate_recall,
             ROUND(
-              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label = 'escalate' THEN 1 ELSE 0 END)
-              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND rc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
+              100.0 * SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label = 'escalate' THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN pr.planner_output->>'decision' = 'credit' AND dc.label IN ('credit','escalate') THEN 1 ELSE 0 END), 0),
             1)::text AS false_credit_rate
      FROM dataset_runs r
      LEFT JOIN dataset_run_cases rc ON rc.run_id = r.id
+     LEFT JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
      LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
      WHERE r.dataset_id = $1
      GROUP BY r.id
@@ -1123,6 +1148,7 @@ interface DatasetRunCaseDbRow {
   label_confidence: string | null;
   disagreement_reason: string | null;
   disagreement_notes: string | null;
+  action_note: string | null;
   dataset_label?: DatasetLabel | null;
   dataset_label_notes?: string | null;
   dataset_label_confidence?: string | null;
@@ -1144,6 +1170,7 @@ export async function getDatasetRunCases(runId: number): Promise<
     label_confidence: string | null;
     disagreement_reason: string | null;
     disagreement_notes: string | null;
+    action_note: string | null;
     pipeline_run: PipelineRunRow | null;
     dataset_label: DatasetLabel | null;
     dataset_label_notes: string | null;
@@ -1156,7 +1183,7 @@ export async function getDatasetRunCases(runId: number): Promise<
   const { rows } = await pool.query<DatasetRunCaseDbRow>(
     `SELECT rc.id, rc.run_id, rc.dataset_case_id, rc.pipeline_run_id, rc.pipeline_error, rc.created_at,
             dc.case_id, rc.label, rc.label_notes, rc.labeled_by, rc.labeled_at,
-            rc.label_confidence, rc.disagreement_reason, rc.disagreement_notes,
+            rc.label_confidence, rc.disagreement_reason, rc.disagreement_notes, rc.action_note,
             dc.label AS dataset_label, dc.label_notes AS dataset_label_notes, dc.label_confidence AS dataset_label_confidence,
             dc.manual_tags AS dataset_manual_tags
      FROM dataset_run_cases rc
@@ -1187,6 +1214,7 @@ export async function getDatasetRunCases(runId: number): Promise<
     label_confidence: r.label_confidence,
     disagreement_reason: r.disagreement_reason,
     disagreement_notes: r.disagreement_notes,
+    action_note: r.action_note ?? null,
     pipeline_run: r.pipeline_run_id ? (runMap.get(r.pipeline_run_id) ?? null) : null,
     dataset_label: r.dataset_label ?? null,
     dataset_label_notes: r.dataset_label_notes ?? null,

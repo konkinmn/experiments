@@ -276,6 +276,7 @@ export interface DatasetRunCase {
   labelConfidence: LabelConfidence | null;
   disagreementReason: DisagreementReason | null;
   disagreementNotes: string | null;
+  actionNote: string | null;
   pipelineRunId: number | null;
   pipelineError: string | null;
   pipelineRun: PipelineResult | null;

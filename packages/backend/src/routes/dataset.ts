@@ -21,6 +21,7 @@ import {
   listDatasetRuns,
   getDatasetRunCases,
   updateDatasetRunCaseLabel,
+  updateRunCaseActionNote,
   updateDatasetCaseTags,
   getDatasetAnalytics,
   getComparisonData,
@@ -619,6 +620,7 @@ export async function datasetRoutes(app: FastifyInstance) {
         labelConfidence: rc.label_confidence,
         disagreementReason: rc.disagreement_reason,
         disagreementNotes: rc.disagreement_notes,
+        actionNote: rc.action_note,
         pipelineRunId: rc.pipeline_run_id,
         pipelineError: rc.pipeline_error,
         pipelineRun: rc.pipeline_run ? formatPipelineRun(rc.pipeline_run) : null,
@@ -654,6 +656,20 @@ export async function datasetRoutes(app: FastifyInstance) {
       }
       throw error;
     }
+  });
+
+  // PATCH /run-cases/:id/action-note — Save action note on run case
+  app.patch<{ Params: { id: string } }>('/run-cases/:id/action-note', async (request, reply) => {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+    const { actionNote } = request.body as { actionNote: string | null };
+    const updated = await updateRunCaseActionNote(id, actionNote ?? null);
+    if (!updated) {
+      return reply.status(404).send({ error: 'Run case not found' });
+    }
+    return { success: true };
   });
 
   // POST /run-cases/:id/retry — Retry a failed run case

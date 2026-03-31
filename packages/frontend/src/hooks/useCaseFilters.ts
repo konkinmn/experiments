@@ -5,6 +5,7 @@ export type LabelFilter = 'all' | 'credit' | 'escalate' | 'undecided' | 'unlabel
 export type RiskFilter = 'all' | 'green' | 'amber' | 'red';
 export type HardGateFilter = 'all' | 'hit' | 'clear';
 export type SortOption = 'default' | 'risk' | 'rubric' | 'amount' | 'account_age';
+export type AgreementFilter = 'all' | 'agree' | 'disagree' | 'no-label';
 export type FilterMode = 'dataset' | 'run';
 
 export interface CaseFilterState {

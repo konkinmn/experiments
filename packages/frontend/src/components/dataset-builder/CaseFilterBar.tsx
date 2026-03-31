@@ -1,5 +1,5 @@
 import { Select } from '@/components/ui/select';
-import type { LabelFilter, RiskFilter, HardGateFilter, SortOption, FilterMode } from '@/hooks/useCaseFilters';
+import type { LabelFilter, RiskFilter, HardGateFilter, SortOption, FilterMode, AgreementFilter } from '@/hooks/useCaseFilters';
 
 interface Props {
   labelFilter: LabelFilter;
@@ -13,6 +13,8 @@ interface Props {
   totalCount: number;
   filteredCount: number;
   mode?: FilterMode;
+  agreementFilter?: AgreementFilter;
+  onAgreementFilterChange?: (v: AgreementFilter) => void;
 }
 
 export function CaseFilterBar({
@@ -27,6 +29,8 @@ export function CaseFilterBar({
   totalCount,
   filteredCount,
   mode = 'run',
+  agreementFilter,
+  onAgreementFilterChange,
 }: Props) {
   return (
     <div className="flex items-center gap-3 flex-wrap">
@@ -74,6 +78,21 @@ export function CaseFilterBar({
             </Select>
           </div>
 
+          {agreementFilter != null && onAgreementFilterChange && (
+            <div className="flex items-center gap-1.5">
+              <label className="text-xs text-muted-foreground whitespace-nowrap">Agreement</label>
+              <Select
+                className="h-8 text-xs w-[120px]"
+                value={agreementFilter}
+                onChange={(e) => onAgreementFilterChange(e.target.value as AgreementFilter)}
+              >
+                <option value="all">All</option>
+                <option value="agree">Agree</option>
+                <option value="disagree">Disagree</option>
+                <option value="no-label">No label</option>
+              </Select>
+            </div>
+          )}
         </>
       )}
 

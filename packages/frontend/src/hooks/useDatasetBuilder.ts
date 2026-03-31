@@ -111,6 +111,17 @@ export function useLabelRunCase() {
   });
 }
 
+export function useUpdateRunCaseActionNote() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, actionNote }: { id: number; actionNote: string | null }) =>
+      api.updateRunCaseActionNote(id, actionNote),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dataset-run-cases'] });
+    },
+  });
+}
+
 export function useRetryRunCase() {
   const queryClient = useQueryClient();
   return useMutation({

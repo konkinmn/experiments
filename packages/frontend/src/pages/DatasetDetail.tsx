@@ -22,14 +22,17 @@ import {
   useRerunDatasetRun,
   useDeleteDatasetRun,
   useRenameDatasetRun,
+  useUpdateRunCaseActionNote,
 } from '@/hooks/useDatasetBuilder';
 import { downloadXlsx, type ColumnDef } from '@/lib/download-xlsx';
 import type { DatasetCase, DatasetLabel, DatasetRun } from '@/types';
+import type { AgreementFilter } from '@/hooks/useCaseFilters';
 
 type ExportRow = DatasetCase & { datasetName: string };
 
 const EXPORT_COLUMNS: ColumnDef<ExportRow>[] = [
   { header: 'Case ID', accessor: (r) => r.caseId },
+  { header: 'WS Link', accessor: (r) => r.rawSignals?.alias ? `https://chat-workstation.k1.anna.money/${r.rawSignals.alias}/tasks/cases?caseId=${r.caseId}` : '' },
   { header: 'Dataset', accessor: (r) => r.datasetName },
   { header: 'Label', accessor: (r) => r.label ?? '' },
   { header: 'Label Notes', accessor: (r) => r.labelNotes ?? '' },
@@ -505,6 +508,9 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
   const retryRunCase = useRetryRunCase();
   const rerunAll = useRerunDatasetRun();
   const deleteRun = useDeleteDatasetRun();
+  const labelCase = useLabelDatasetCase();
+  const tagCase = useTagCase();
+  const updateActionNote = useUpdateRunCaseActionNote();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showPrompt, setShowPrompt] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
@@ -575,25 +581,110 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
     return map;
   }, [runCases]);
 
-  const filters = useCaseFilters(mappedCases);
+  const runCaseToDatasetCase = useMemo(() => {
+    if (!runCases) return {};
+    const map: Record<number, number> = {};
+    for (const rc of runCases) map[rc.id] = rc.datasetCaseId;
+    return map;
+  }, [runCases]);
 
-  const runSummary = useMemo(() => {
-    if (!runCases) return { total: 0, labeled: 0, credit: 0, escalate: 0, undecided: 0 };
-    let labeled = 0, credit = 0, escalate = 0, undecided = 0;
+  const handleLabel = (runCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) => {
+    const datasetCaseId = runCaseToDatasetCase[runCaseId];
+    if (datasetCaseId != null) {
+      labelCase.mutate({ id: datasetCaseId, label, notes: notes ?? null, labeledBy: null, confidence, disagreementReason, disagreementNotes });
+    }
+  };
+
+  const handleTagCase = (runCaseId: number, tags: string[]) => {
+    const datasetCaseId = runCaseToDatasetCase[runCaseId];
+    if (datasetCaseId != null) {
+      tagCase.mutate({ id: datasetCaseId, tags });
+    }
+  };
+
+  const handleActionNote = (runCaseId: number, note: string | null) => {
+    updateActionNote.mutate({ id: runCaseId, actionNote: note });
+  };
+
+  const actionNotes = useMemo(() => {
+    if (!runCases) return {};
+    const map: Record<number, string | null> = {};
+    for (const rc of runCases) map[rc.id] = rc.actionNote;
+    return map;
+  }, [runCases]);
+
+  const filters = useCaseFilters(mappedCases);
+  const [agreementFilter, setAgreementFilter] = useState<AgreementFilter>('all');
+
+  const filteredByAgreement = useMemo(() => {
+    if (agreementFilter === 'all') return filters.filteredCases;
+    return filters.filteredCases.filter((c) => {
+      const ag = agreementMap[c.id];
+      if (agreementFilter === 'agree') return ag === true;
+      if (agreementFilter === 'disagree') return ag === false;
+      return ag == null; // no-label
+    });
+  }, [filters.filteredCases, agreementFilter, agreementMap]);
+
+  const pipelineStats = useMemo(() => {
+    if (!runCases) return null;
+    let decisionCredit = 0, decisionEscalate = 0;
+    let riskGreen = 0, riskAmber = 0, riskRed = 0;
+    let hardGateCount = 0;
+    const hardGateBreakdown: Record<string, number> = {};
+    let totalDuration = 0, durationCount = 0;
+    let errorCount = 0;
+
     for (const rc of runCases) {
-      if (rc.label) {
-        labeled++;
-        if (rc.label === 'credit') credit++;
-        else if (rc.label === 'escalate') escalate++;
-        else if (rc.label === 'undecided') undecided++;
+      if (rc.pipelineError) { errorCount++; continue; }
+      if (!rc.pipelineRun) continue;
+      const pr = rc.pipelineRun;
+      if (pr.hardGateTriggered) {
+        decisionEscalate++;
+        hardGateCount++;
+        hardGateBreakdown[pr.hardGateTriggered] = (hardGateBreakdown[pr.hardGateTriggered] || 0) + 1;
+      } else if (pr.plannerOutput?.decision === 'credit') {
+        decisionCredit++;
+      } else {
+        decisionEscalate++;
+      }
+      const risk = pr.disputeProfile?.risk_level;
+      if (risk === 'green') riskGreen++;
+      else if (risk === 'amber') riskAmber++;
+      else if (risk === 'red') riskRed++;
+      if (pr.pipelineDurationMs) { totalDuration += pr.pipelineDurationMs; durationCount++; }
+    }
+
+    return {
+      decisionCredit, decisionEscalate,
+      riskGreen, riskAmber, riskRed,
+      hardGateCount, hardGateBreakdown,
+      avgDurationMs: durationCount > 0 ? totalDuration / durationCount : 0,
+      errorCount,
+    };
+  }, [runCases]);
+
+  const comparisonSummary = useMemo(() => {
+    if (!runCases) return null;
+    let labeled = 0, agreed = 0, disagreed = 0, falseCredits = 0, missedCredits = 0;
+    for (const rc of runCases) {
+      if (!rc.datasetLabel || rc.datasetLabel === 'undecided' || !rc.pipelineRun) continue;
+      labeled++;
+      if (rc.agreement === true) agreed++;
+      else if (rc.agreement === false) {
+        disagreed++;
+        const pipelineDecision = rc.pipelineRun.hardGateTriggered ? 'escalate' : rc.pipelineRun.plannerOutput?.decision === 'credit' ? 'credit' : 'escalate';
+        if (pipelineDecision === 'credit' && rc.datasetLabel === 'escalate') falseCredits++;
+        if (pipelineDecision === 'escalate' && rc.datasetLabel === 'credit') missedCredits++;
       }
     }
-    return { total: runCases.length, labeled, credit, escalate, undecided };
+    if (labeled === 0) return null;
+    return { labeled, total: runCases.length, agreed, disagreed, falseCredits, missedCredits };
   }, [runCases]);
 
   return (
     <div className="space-y-6">
-      {/* Run metrics header */}
+      {/* Run header */}
       <Card>
         <CardContent className="pt-6">
           <div className="flex items-center justify-between mb-4">
@@ -665,70 +756,107 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
               </p>
             </div>
           )}
-          <div className="grid grid-cols-5 gap-4 text-center">
-            <div>
-              <p className="text-2xl font-bold">
-                {run.agreement_rate != null ? `${run.agreement_rate}%` : '—'}
-              </p>
-              <p className="text-xs text-muted-foreground">Agreement</p>
+
+          {/* Pipeline decisions */}
+          {pipelineStats && (
+            <>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                {/* Decisions */}
+                <div className="rounded-md border border-gray-100 bg-gray-50 px-4 py-3">
+                  <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-2">Decisions</p>
+                  <div className="flex items-center gap-6">
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-green-600">{pipelineStats.decisionCredit}</p>
+                      <p className="text-xs text-muted-foreground">Credit</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-amber-600">{pipelineStats.decisionEscalate}</p>
+                      <p className="text-xs text-muted-foreground">Escalate</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold">{run.completed_cases}/{run.total_cases}</p>
+                      <p className="text-xs text-muted-foreground">Cases</p>
+                    </div>
+                  </div>
+                </div>
+                {/* Risk & Hard Gates */}
+                <div className="rounded-md border border-gray-100 bg-gray-50 px-4 py-3">
+                  <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-2">Risk & Hard Gates</p>
+                  <div className="flex items-center gap-6">
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-green-600">{pipelineStats.riskGreen}</p>
+                      <p className="text-xs text-muted-foreground">Green</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-amber-600">{pipelineStats.riskAmber}</p>
+                      <p className="text-xs text-muted-foreground">Amber</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-red-600">{pipelineStats.riskRed}</p>
+                      <p className="text-xs text-muted-foreground">Red</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold">{pipelineStats.hardGateCount}</p>
+                      <p className="text-xs text-muted-foreground">Hard Gate</p>
+                    </div>
+                  </div>
+                  {Object.keys(pipelineStats.hardGateBreakdown).length > 0 && (
+                    <div className="flex items-center gap-2 mt-2">
+                      {Object.entries(pipelineStats.hardGateBreakdown).map(([gate, count]) => (
+                        <span key={gate} className="inline-flex items-center rounded-full bg-red-50 border border-red-100 px-2 py-0.5 text-xs text-red-700">
+                          {gate}: {count}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <span>Avg duration: {(pipelineStats.avgDurationMs / 1000).toFixed(1)}s</span>
+                {pipelineStats.errorCount > 0 && (
+                  <span className="text-red-600">Errors: {pipelineStats.errorCount}</span>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Comparison vs human labels */}
+          {comparisonSummary && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-3">Pipeline vs Human Labels</p>
+              <div className="grid grid-cols-5 gap-4 text-center">
+                <div>
+                  <p className="text-2xl font-bold">{comparisonSummary.labeled}<span className="text-base font-normal text-muted-foreground">/{comparisonSummary.total}</span></p>
+                  <p className="text-xs text-muted-foreground">Labeled</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-green-600">{comparisonSummary.agreed} <span className="text-base font-normal">({comparisonSummary.labeled > 0 ? Math.round(100 * comparisonSummary.agreed / comparisonSummary.labeled) : 0}%)</span></p>
+                  <p className="text-xs text-muted-foreground">Agree</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-red-600">{comparisonSummary.disagreed}</p>
+                  <p className="text-xs text-muted-foreground">Disagree</p>
+                </div>
+                <div>
+                  <p className={`text-2xl font-bold ${comparisonSummary.falseCredits > 0 ? 'text-red-600' : ''}`}>{comparisonSummary.falseCredits}</p>
+                  <p className="text-xs text-muted-foreground">False Credits</p>
+                </div>
+                <div>
+                  <p className={`text-2xl font-bold ${comparisonSummary.missedCredits > 0 ? 'text-amber-600' : ''}`}>{comparisonSummary.missedCredits}</p>
+                  <p className="text-xs text-muted-foreground">Missed Credits</p>
+                </div>
+              </div>
+              {(run.credit_precision != null || run.escalate_recall != null || run.false_credit_rate != null) && (
+                <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+                  {run.credit_precision != null && <span>Credit Precision: <span className="font-medium text-gray-900">{run.credit_precision}%</span></span>}
+                  {run.escalate_recall != null && <span>Escalate Recall: <span className="font-medium text-gray-900">{run.escalate_recall}%</span></span>}
+                  {run.false_credit_rate != null && <span>False Credit Rate: <span className={`font-medium ${run.false_credit_rate > 0 ? 'text-red-600' : 'text-gray-900'}`}>{run.false_credit_rate}%</span></span>}
+                </div>
+              )}
             </div>
-            <div>
-              <p className="text-2xl font-bold">
-                {run.credit_precision != null ? `${run.credit_precision}%` : '—'}
-              </p>
-              <p className="text-xs text-muted-foreground">Credit Precision</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">
-                {run.escalate_recall != null ? `${run.escalate_recall}%` : '—'}
-              </p>
-              <p className="text-xs text-muted-foreground">Escalate Recall</p>
-            </div>
-            <div>
-              <p className={`text-2xl font-bold ${run.false_credit_rate != null && run.false_credit_rate > 0 ? 'text-red-600' : ''}`}>
-                {run.false_credit_rate != null ? `${run.false_credit_rate}%` : '—'}
-              </p>
-              <p className="text-xs text-muted-foreground">False Credit Rate</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">
-                {run.completed_cases}/{run.total_cases}
-              </p>
-              <p className="text-xs text-muted-foreground">Cases</p>
-            </div>
-          </div>
+          )}
         </CardContent>
       </Card>
-
-      {/* Label summary */}
-      {runCases && runCases.length > 0 && (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-5 gap-4 text-center">
-              <div>
-                <p className="text-2xl font-bold">{runSummary.total}</p>
-                <p className="text-xs text-muted-foreground">Total Cases</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{runSummary.labeled}</p>
-                <p className="text-xs text-muted-foreground">Labeled</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-green-600">{runSummary.credit}</p>
-                <p className="text-xs text-muted-foreground">Credit</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-amber-600">{runSummary.escalate}</p>
-                <p className="text-xs text-muted-foreground">Escalate</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-blue-600">{runSummary.undecided}</p>
-                <p className="text-xs text-muted-foreground">Can't decide yet</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Filter bar */}
       {mappedCases.length > 0 && (
@@ -742,7 +870,9 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
           sortOption={filters.sortOption}
           onSortChange={filters.setSortOption}
           totalCount={filters.totalCount}
-          filteredCount={filters.filteredCount}
+          filteredCount={filteredByAgreement.length}
+          agreementFilter={agreementFilter}
+          onAgreementFilterChange={setAgreementFilter}
         />
       )}
 
@@ -750,10 +880,14 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
       <ResultsTable
         results={[]}
         verdictOptions="dataset"
-        datasetCases={filters.filteredCases}
+        datasetCases={filteredByAgreement}
         agreementMap={agreementMap}
+        onDatasetLabel={handleLabel}
+        onTagCase={handleTagCase}
         onRetryCase={handleRetryCase}
         retryingCaseIds={retryingIds}
+        onActionNote={handleActionNote}
+        actionNotes={actionNotes}
       />
 
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

@@ -29,6 +29,8 @@ interface ResultsTableProps {
   tagSuggestions?: string[];
   onRetryCase?: (runCaseId: number) => void;
   retryingCaseIds?: Set<number>;
+  onActionNote?: (runCaseId: number, note: string | null) => void;
+  actionNotes?: Record<number, string | null>;
 }
 
 const RISK_BADGE: Record<RiskLevel, { label: string; variant: 'green' | 'amber' | 'red' }> = {
@@ -200,7 +202,7 @@ const SIGNAL_GROUPS: { title: string; signals: { key: keyof CaseSignalsRaw; labe
   },
 ];
 
-export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, onTagCase, onDatasetLabel2, agreementMap, tagSuggestions, onRetryCase, retryingCaseIds }: ResultsTableProps) {
+export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'eval', datasetCases, onDatasetLabel, onDeleteCase, onTagCase, onDatasetLabel2, agreementMap, tagSuggestions, onRetryCase, retryingCaseIds, onActionNote, actionNotes }: ResultsTableProps) {
   if (verdictOptions === 'dataset') {
     const cases = datasetCases ?? [];
     if (cases.length === 0) {
@@ -288,7 +290,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
               : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
             const labelBadge = dc.label ? LABEL_BADGE[dc.label] : null;
             // Fall through to the existing pipeline-based rendering below
-            return <DatasetCaseCard key={dc.id} dc={dc} r={r} risk={risk} decision={decision} labelBadge={labelBadge} onDatasetLabel={onDatasetLabel} onDeleteCase={onDeleteCase} onTagCase={onTagCase} onDatasetLabel2={onDatasetLabel2} agreementMap={agreementMap} tagSuggestions={tagSuggestions} onRetryCase={onRetryCase} retryingCaseIds={retryingCaseIds} />;
+            return <DatasetCaseCard key={dc.id} dc={dc} r={r} risk={risk} decision={decision} labelBadge={labelBadge} onDatasetLabel={onDatasetLabel} onDeleteCase={onDeleteCase} onTagCase={onTagCase} onDatasetLabel2={onDatasetLabel2} agreementMap={agreementMap} tagSuggestions={tagSuggestions} onRetryCase={onRetryCase} retryingCaseIds={retryingCaseIds} onActionNote={onActionNote} actionNote={actionNotes?.[dc.id] ?? null} />;
           }
 
           // New: render context-only card (Dataset tab)
@@ -583,6 +585,8 @@ function DatasetCaseCard({
   tagSuggestions,
   onRetryCase,
   retryingCaseIds,
+  onActionNote,
+  actionNote,
 }: {
   dc: DatasetCase;
   r: PipelineResult;
@@ -597,9 +601,11 @@ function DatasetCaseCard({
   tagSuggestions?: string[];
   onRetryCase?: (id: number) => void;
   retryingCaseIds?: Set<number>;
+  onActionNote?: (id: number, note: string | null) => void;
+  actionNote?: string | null;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
+    <div className={`rounded-lg border bg-white ${agreementMap?.[dc.id] === false ? 'border-red-200' : 'border-gray-200'}`}>
       <div className="px-5 py-4">
         {/* Top: Case ID + actions */}
         <div className="flex items-center justify-between mb-3">
@@ -685,6 +691,9 @@ function DatasetCaseCard({
           onDatasetLabel2={onDatasetLabel2}
           onTagCase={onTagCase}
           tagSuggestions={tagSuggestions}
+          isRunMode={!!agreementMap}
+          onActionNote={onActionNote}
+          initialActionNote={actionNote}
         />
       </div>
     </div>
@@ -709,6 +718,9 @@ function ExpandedDetail({
   onDatasetLabel2,
   onTagCase,
   tagSuggestions,
+  isRunMode,
+  onActionNote,
+  initialActionNote,
 }: {
   result: PipelineResult;
   onReview?: (id: number, verdict: 'correct' | 'incorrect', notes?: string) => void;
@@ -727,7 +739,14 @@ function ExpandedDetail({
   onDatasetLabel2?: (datasetCaseId: number, label: DatasetLabel, notes?: string, confidence?: string | null) => void;
   onTagCase?: (datasetCaseId: number, tags: string[]) => void;
   tagSuggestions?: string[];
+  isRunMode?: boolean;
+  onActionNote?: (id: number, note: string | null) => void;
+  initialActionNote?: string | null;
 }) {
+  const [actionNoteValue, setActionNoteValue] = useState(initialActionNote ?? '');
+  useEffect(() => {
+    setActionNoteValue(initialActionNote ?? '');
+  }, [initialActionNote]);
   const [reviewNotes, setReviewNotes] = useState(
     verdictOptions === 'dataset' ? (datasetLabelNotes ?? '') : (result.reviewerNotes ?? ''),
   );
@@ -759,8 +778,36 @@ function ExpandedDetail({
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showRawResponse, setShowRawResponse] = useState(false);
 
+  const pipelineDecision = result.hardGateTriggered ? 'escalate' : result.plannerOutput?.decision === 'credit' ? 'credit' : 'escalate';
+  const currentDisagreement = datasetLabel && datasetLabel !== 'undecided' && datasetLabel !== pipelineDecision;
+
   return (
     <div className="space-y-4">
+      {/* Run mode: Action note at the top */}
+      {isRunMode && datasetCaseId != null && onActionNote && (
+        <div className="rounded-md border border-blue-100 bg-blue-50/50 px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider">What to do</h4>
+            {currentDisagreement && (
+              <span className="text-xs text-red-600 font-medium">Disagrees with pipeline</span>
+            )}
+          </div>
+          <textarea
+            className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm placeholder:text-muted-foreground resize-y min-h-[36px]"
+            placeholder="Write what should happen with this case..."
+            rows={2}
+            value={actionNoteValue}
+            onChange={(e) => setActionNoteValue(e.target.value)}
+            onBlur={() => {
+              const trimmed = actionNoteValue.trim() || null;
+              if (trimmed !== (initialActionNote ?? null)) {
+                onActionNote(datasetCaseId, trimmed);
+              }
+            }}
+          />
+        </div>
+      )}
+
       {/* Hard Gate */}
       {result.hardGateTriggered && (
         <div>
@@ -1100,10 +1147,8 @@ function ExpandedDetail({
         </div>
       )}
 
-      {/* Reviewer Controls — dataset mode */}
-      {verdictOptions === 'dataset' && onDatasetLabel && datasetCaseId != null && (() => {
-        const pipelineDecision = result.hardGateTriggered ? 'escalate' : result.plannerOutput?.decision === 'credit' ? 'credit' : 'escalate';
-
+      {/* Reviewer Controls — dataset mode only (not run mode) */}
+      {verdictOptions === 'dataset' && !isRunMode && onDatasetLabel && datasetCaseId != null && (() => {
         const handleLabel = (label: DatasetLabel) => {
           const isDisagreement = label !== 'undecided' && label !== pipelineDecision;
           onDatasetLabel(
@@ -1112,8 +1157,6 @@ function ExpandedDetail({
             isDisagreement ? (disNotes || null) : null,
           );
         };
-
-        const currentDisagreement = datasetLabel && datasetLabel !== 'undecided' && datasetLabel !== pipelineDecision;
 
         return (
         <div className="border-t pt-3 space-y-3">
@@ -1216,12 +1259,13 @@ function ExpandedDetail({
               </>
             )}
           </div>
+
         </div>
         );
       })()}
 
-      {/* Manual Tags — dataset mode */}
-      {verdictOptions === 'dataset' && onTagCase && datasetCaseId != null && (
+      {/* Manual Tags — dataset mode only */}
+      {verdictOptions === 'dataset' && !isRunMode && onTagCase && datasetCaseId != null && (
         <div className="border-t pt-3">
           <h4 className="text-xs font-medium text-muted-foreground mb-2">Tags</h4>
           <div className="flex items-center gap-2 flex-wrap">

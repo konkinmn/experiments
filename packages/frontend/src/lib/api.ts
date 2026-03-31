@@ -132,6 +132,13 @@ export const api = {
   getDatasetRunCases: (runId: number) =>
     fetchApi<{ data: DatasetRunCase[] }>(`/api/datasets/runs/${runId}/cases`),
 
+  updateRunCaseActionNote: (runCaseId: number, actionNote: string | null) =>
+    fetchApi<{ success: boolean }>(`/api/datasets/run-cases/${runCaseId}/action-note`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actionNote }),
+    }),
+
   retryRunCase: (runCaseId: number) =>
     fetchApi<{ success: boolean }>(`/api/datasets/run-cases/${runCaseId}/retry`, {
       method: 'POST',
