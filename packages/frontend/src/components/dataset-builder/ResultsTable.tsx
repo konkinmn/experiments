@@ -286,7 +286,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
             const r = dc.pipelineRun!;
             const risk = RISK_BADGE[r.disputeProfile.risk_level];
             const decision = r.hardGateTriggered
-              ? { label: HARD_GATE_LABELS[r.hardGateTriggered] ?? r.hardGateTriggered, variant: 'red' as const }
+              ? { label: 'Escalate', variant: 'amber' as const }
               : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
             const labelBadge = dc.label ? LABEL_BADGE[dc.label] : null;
             // Fall through to the existing pipeline-based rendering below
@@ -328,7 +328,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
       {results.map((r) => {
         const risk = RISK_BADGE[r.disputeProfile.risk_level];
         const decision = r.hardGateTriggered
-          ? { label: HARD_GATE_LABELS[r.hardGateTriggered] ?? r.hardGateTriggered, variant: 'red' as const }
+          ? { label: 'Escalate', variant: 'amber' as const }
           : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
 
         return (
@@ -648,6 +648,12 @@ function DatasetCaseCard({
                 <span className="text-xs text-muted-foreground">Decision</span>
                 <div className="mt-0.5"><Badge variant={decision.variant as 'green' | 'amber' | 'red'}>{decision.label}</Badge></div>
               </div>
+              {r.hardGateTriggered && (
+                <div>
+                  <span className="text-xs text-muted-foreground">Hard Gate</span>
+                  <div className="mt-0.5"><Badge variant="red">{HARD_GATE_LABELS[r.hardGateTriggered] ?? r.hardGateTriggered}</Badge></div>
+                </div>
+              )}
               <div>
                 <span className="text-xs text-muted-foreground">Duration</span>
                 <p className="text-sm mt-0.5">{(r.pipelineDurationMs / 1000).toFixed(1)}s</p>

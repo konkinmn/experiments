@@ -82,12 +82,12 @@ export const DEFAULT_HARD_GATE_CONFIG: HardGateConfig = {
 export const DEFAULT_SCORING_RULES: RubricScoringRules = {
   account_age: [
     { min_days: 365, points: 20 },
-    { min_days: 180, points: 12 },
+    { min_days: 180, points: 18 },
     { min_days: 90, points: 5 },
   ],
-  tier: { E: 10, D: 8, C: 5 },
+  tier: { E: 10, D: 8, C: 5, B: 2 },
   money_maker_points: 15,
-  trust_score: { GREEN: 8, AMBER: 4 },
+  trust_score: { GREEN: 8, AMBER: 4, BLUE: 2 },
   tx_activity: { min_count: 5, points: 5 },
   dispute_history: [
     { max_disputes: 0, points: 30 },
@@ -97,11 +97,9 @@ export const DEFAULT_SCORING_RULES: RubricScoringRules = {
   recent_dispute_penalty: -5,
   scam_victim_penalty: -5,
   amount_brackets: [
-    { max_amount: 5, points: 20 },
-    { max_amount: 10, points: 14 },
-    { max_amount: 15, points: 9 },
     { max_amount: 25, points: 5 },
   ],
+  crime_reference_points: 5,
 };
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
@@ -117,7 +115,7 @@ interface RubricScoreResult {
   transaction_risk: number;
 }
 
-function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights, rules?: RubricScoringRules): RubricScoreResult {
+function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights, rules?: RubricScoringRules, hasCrimeReference?: boolean): RubricScoreResult {
   const w = weights ?? DEFAULT_RUBRIC_WEIGHTS;
   const r = rules ?? DEFAULT_SCORING_RULES;
 
@@ -163,6 +161,7 @@ function computeRubricScore(raw: CaseSignalsRaw, weights?: RubricWeights, rules?
     const amtBracket = [...r.amount_brackets].sort((a, b) => a.max_amount - b.max_amount).find((b) => amount < b.max_amount || (amount === b.max_amount && b === r.amount_brackets[r.amount_brackets.length - 1]));
     if (amtBracket) transactionRisk += amtBracket.points;
   }
+  if (hasCrimeReference) transactionRisk += r.crime_reference_points;
   transactionRisk = Math.min(transactionRisk, w.transaction_risk_max);
 
   return {
@@ -182,8 +181,8 @@ function deriveRiskLevel(hardGates: HardGateSignals, rubricScore: number, weight
   return 'red';
 }
 
-function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals, config?: PipelineConfig): DisputeProfile {
-  const rubric = computeRubricScore(raw, config?.rubric_weights, config?.scoring_rules);
+function buildDisputeProfile(raw: CaseSignalsRaw, hardGates: HardGateSignals, config?: PipelineConfig, hasCrimeReference?: boolean): DisputeProfile {
+  const rubric = computeRubricScore(raw, config?.rubric_weights, config?.scoring_rules, hasCrimeReference);
   const riskLevel = deriveRiskLevel(hardGates, rubric.total, config?.rubric_weights);
 
   const riskFactors: string[] = [];
@@ -256,12 +255,12 @@ const PlannerArgsSchema = z.object({
     'ACCOUNT_TAKEOVER_FRAUD', 'CARD_NOT_PRESENT_FRAUD', 'BUST_OUT_COLLUSIVE_MERCHANT',
     'FIRST_PARTY', 'MODIFICATION_OF_PAYMENT_ORDER', 'MANIPULATION_OF_CARDHOLDER',
     'PAYMENT_CREATED_BY_FRAUDSTER', 'MANIPULATION_OF_PAYER_BY_FRAUDSTER',
-  ]).optional(),
+  ]).nullable().optional(),
   fraud_sub_type: z.enum([
     'CONVENIENCE_OR_BALANCE_TRANSFER', 'PIN_NOT_USED', 'PIN_USED', 'UNKNOWN',
     'ADVANCE_FEE', 'IMPERSONATION', 'INVESTMENT', 'PURCHASE', 'ROMANCE',
-  ]).optional(),
-  crime_reference: z.string().optional(),
+  ]).nullable().optional(),
+  crime_reference: z.string().nullable().optional(),
 });
 
 const PlannerOutputSchema = z.discriminatedUnion('decision', [
@@ -317,12 +316,8 @@ function parseJson(raw: string): unknown {
   return null;
 }
 
-const NON_CUSTOMER_SENDER_TYPES = new Set([
-  'agent', 'system', 'annabot', 'bot', 'unknown',
-]);
-
 function filterCustomerMessages(messages: DialogueMessage[]): DialogueMessage[] {
-  return messages.filter((m) => !NON_CUSTOMER_SENDER_TYPES.has(m.role.toLowerCase()));
+  return messages.filter((m) => m.role.toLowerCase() === 'client');
 }
 
 async function fetchAndParseFileArtifacts(
@@ -436,7 +431,7 @@ async function callPlanner(
     }));
   }
 
-  // Section 2: Customer dialogue messages
+  // Section 2: Customer dialogue messages (all dialogues, all messages)
   if (enrichment.customerDialogueMessages.length > 0) {
     signalsPayload.customer_dialogue_messages = enrichment.customerDialogueMessages.map((m) => ({
       role: m.role,
@@ -445,9 +440,19 @@ async function callPlanner(
     }));
   }
 
-  // Section 3: File artifact descriptions
+  // Section 3: File artifact descriptions (cap to keep payload small)
   if (enrichment.parsedFileDescriptions.length > 0) {
-    signalsPayload.artifact_descriptions = enrichment.parsedFileDescriptions;
+    const MAX_FILES = 3;
+    const MAX_FILE_DESC_CHARS = 400;
+    const files = enrichment.parsedFileDescriptions.slice(0, MAX_FILES);
+    signalsPayload.artifact_descriptions = files.map((desc) =>
+      typeof desc === 'string' && desc.length > MAX_FILE_DESC_CHARS
+        ? desc.slice(0, MAX_FILE_DESC_CHARS) + '... [truncated]'
+        : desc,
+    );
+    if (enrichment.parsedFileDescriptions.length > MAX_FILES) {
+      signalsPayload.artifact_descriptions_note = `Showing ${MAX_FILES} of ${enrichment.parsedFileDescriptions.length} files`;
+    }
   }
 
   const plannerMessages = [
@@ -519,10 +524,16 @@ export async function fetchCaseContext(caseId: number): Promise<CaseContext> {
       }
       return false;
     })
+    .sort((a, b) => {
+      const aDate = (a as { created_at?: string }).created_at ?? '';
+      const bDate = (b as { created_at?: string }).created_at ?? '';
+      return aDate.localeCompare(bDate);
+    })
     .map((a) => {
       const art = a as { id?: number; artifact_id?: string };
       return art.artifact_id ?? String(art.id);
-    });
+    })
+    .slice(0, 3); // First 3 dialogues by date — contains initial claim and key context
 
   // Fetch dialogue + parse files in parallel
   const [dialoguesFetchResult, parsedFileDescriptions] = await Promise.all([
@@ -593,7 +604,10 @@ export async function runDisputePipeline(
   // Build dispute profile (use pipeline config from run config if provided)
   const pipelineConfig = runConfig?.pipeline_config;
   const hardGates = deriveHardGates(rawSignals);
-  const profile = buildDisputeProfile(rawSignals, hardGates, pipelineConfig);
+  const hasCrimeReference = caseActions.some((a) =>
+    a.action_type === 'DISPUTE_FORM_FILLED' && a.metadata?.crime_ref_number,
+  );
+  const profile = buildDisputeProfile(rawSignals, hardGates, pipelineConfig, hasCrimeReference);
 
   // Layer 1: Hard gates (respects gate toggles from config)
   const triggeredGate = checkHardGates(hardGates, pipelineConfig?.hard_gates);

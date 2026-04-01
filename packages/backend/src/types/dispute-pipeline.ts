@@ -88,9 +88,9 @@ export interface PlannerArgs {
   is_fraud: boolean;
   credit_mode: 'IMMEDIATELY';
   reason: string;
-  fraud_type?: string;
-  fraud_sub_type?: string;
-  crime_reference?: string;
+  fraud_type?: string | null;
+  fraud_sub_type?: string | null;
+  crime_reference?: string | null;
 }
 
 export interface PlannerOutput {
@@ -284,6 +284,8 @@ export interface RubricScoringRules {
   scam_victim_penalty: number;
   // Amount brackets: [max_amount, points]
   amount_brackets: Array<{ max_amount: number; points: number }>;
+  // Crime reference bonus points (contextual)
+  crime_reference_points: number;
 }
 
 export interface PipelineConfig {

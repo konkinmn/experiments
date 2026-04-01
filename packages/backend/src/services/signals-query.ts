@@ -25,14 +25,33 @@ case_merchants AS (
   WHERE a.case_id = @case_id
     AND a.artifact_type = 'TRANSACTION'
 ),
-account_data AS (
+account_base AS (
   SELECT
+    ac.id AS customer_id,
     ac.created AS account_created_at,
     DATE_DIFF(DATE((SELECT case_created_at FROM case_data)), DATE(ac.created), DAY) AS account_age_days,
-    ac.status AS account_status
+    ac.status AS current_status
   FROM \`anna-money.export.account_customer\` ac
   WHERE ac.magneta_alias = (SELECT alias FROM case_data)
   LIMIT 1
+),
+account_status_at_case AS (
+  SELECT h.current_status AS historical_status
+  FROM \`anna-money.export.account_customer_status_history\` h
+  JOIN account_base ab ON h.customer_id = ab.customer_id
+  WHERE h.created <= (SELECT case_created_at FROM case_data)
+  ORDER BY h.created DESC
+  LIMIT 1
+),
+account_data AS (
+  SELECT
+    ab.account_created_at,
+    ab.account_age_days,
+    COALESCE(
+      (SELECT historical_status FROM account_status_at_case),
+      ab.current_status
+    ) AS account_status
+  FROM account_base ab
 ),
 cifas_data AS (
   SELECT COUNT(*) AS cifas_count

@@ -468,6 +468,7 @@ export async function datasetRoutes(app: FastifyInstance) {
         recent_dispute_penalty: z.number(),
         scam_victim_penalty: z.number(),
         amount_brackets: z.array(z.object({ max_amount: z.number(), points: z.number() })),
+        crime_reference_points: z.number().default(5),
       }),
     }).optional(),
     // Legacy: accept rubric_weights directly for backward compatibility

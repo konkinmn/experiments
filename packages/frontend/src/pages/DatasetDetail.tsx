@@ -62,6 +62,7 @@ export function DatasetDetail() {
   const deleteCase = useDeleteDatasetCase();
   const deleteDataset = useDeleteDataset();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [datasetDeleteText, setDatasetDeleteText] = useState('');
   const tagCase = useTagCase();
   const labelCase2 = useLabelDatasetCase2();
   const refreshDataset = useRefreshDataset();
@@ -386,22 +387,32 @@ export function DatasetDetail() {
         datasetId={datasetId}
       />
 
-      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+      <Dialog open={deleteConfirmOpen} onOpenChange={(open) => { setDeleteConfirmOpen(open); if (!open) setDatasetDeleteText(''); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete dataset</DialogTitle>
             <DialogDescription>
-              This will permanently delete the dataset and all its cases. This action cannot be undone.
+              This will permanently delete the dataset, all cases, labels, and runs. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
+          <div className="py-2">
+            <p className="text-sm text-muted-foreground mb-2">Type <span className="font-mono font-bold text-gray-900">delete</span> to confirm:</p>
+            <input
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={datasetDeleteText}
+              onChange={(e) => setDatasetDeleteText(e.target.value)}
+              placeholder="delete"
+              autoFocus
+            />
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+            <Button variant="outline" onClick={() => { setDeleteConfirmOpen(false); setDatasetDeleteText(''); }}>
               Cancel
             </Button>
             <Button
               variant="destructive"
               onClick={handleDeleteDataset}
-              disabled={deleteDataset.isPending}
+              disabled={deleteDataset.isPending || datasetDeleteText !== 'delete'}
             >
               {deleteDataset.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Delete
@@ -512,6 +523,7 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
   const tagCase = useTagCase();
   const updateActionNote = useUpdateRunCaseActionNote();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [showPrompt, setShowPrompt] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Set<number>>(new Set());
 
@@ -736,6 +748,9 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
               </div>
             )}
           </div>
+          {run.description && (
+            <p className="text-sm text-muted-foreground mb-4">{run.description}</p>
+          )}
           {showPrompt && run.config.prompt_content && (
             <pre className="mb-4 max-h-64 overflow-auto rounded-md border border-gray-200 bg-gray-50 p-3 text-xs font-mono text-gray-700 whitespace-pre-wrap">{run.config.prompt_content}</pre>
           )}
@@ -890,20 +905,30 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
         actionNotes={actionNotes}
       />
 
-      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+      <Dialog open={showDeleteDialog} onOpenChange={(open) => { setShowDeleteDialog(open); if (!open) setDeleteConfirmText(''); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete run</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &quot;{run.name}&quot;? This will remove all run results and cannot be undone.
+              This will permanently delete &quot;{run.name}&quot; and all run results. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
+          <div className="py-2">
+            <p className="text-sm text-muted-foreground mb-2">Type <span className="font-mono font-bold text-gray-900">delete</span> to confirm:</p>
+            <input
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="delete"
+              autoFocus
+            />
+          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(''); }}>Cancel</Button>
             <Button
               variant="destructive"
-              onClick={() => deleteRun.mutate(run.id, { onSuccess: () => { setShowDeleteDialog(false); onDeleted(); } })}
-              disabled={deleteRun.isPending}
+              onClick={() => deleteRun.mutate(run.id, { onSuccess: () => { setShowDeleteDialog(false); setDeleteConfirmText(''); onDeleted(); } })}
+              disabled={deleteRun.isPending || deleteConfirmText !== 'delete'}
             >
               {deleteRun.isPending ? 'Deleting...' : 'Delete'}
             </Button>
