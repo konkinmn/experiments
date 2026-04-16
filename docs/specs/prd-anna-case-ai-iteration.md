@@ -17,7 +17,7 @@ The pipeline has been prototyped and validated in a local test environment (`exp
 
 The pipeline runs a 4-step analysis on each dispute case:
 
-1. **Signal fetch + risk scoring** — Pulls 15+ signals from BigQuery (account age, trust score, transaction history, CIFAS markers, dispute history, etc.) and scores them on a rubric (0–108 scale). The score maps to a risk level: green (low risk), amber (medium), or red (high).
+1. **Signal fetch + risk scoring** — Pulls 13 risk signals from BigQuery across ~10 source tables (account age, account status, CIFAS markers, tier, money maker badge, trust score, scammer flag, scam victim count, 90-day transaction activity, 6-month dispute history) and scores them on a rubric (0–98 scale). The score maps to a risk level: green (low risk), amber (medium), or red (high).
 
 2. **Hard gates** — Four deterministic checks that run before the AI. If any gate fires, the case is immediately escalated — no AI needed:
    - CIFAS marker present
@@ -29,7 +29,7 @@ The pipeline runs a 4-step analysis on each dispute case:
 
 4. **AI Planner** — An LLM analyzes the enriched context (risk profile, case details, customer dialogue, parsed documents) and outputs a structured decision: credit or escalate, with full reasoning, uncertainty factors, and (when crediting) the parameters needed to issue the credit.
 
-The pipeline always produces a result. If any step fails — LLM response can't be parsed, file parsing fails, dialogue fetch times out — the pipeline defaults to escalation. Enrichment failures are non-fatal: missing files or dialogue don't block the analysis.
+The pipeline always produces a result. If any step fails — LLM response can’t be parsed, file parsing fails, dialogue fetch times out — the pipeline defaults to escalation. Enrichment failures are non-fatal: missing files or dialogue don’t block the analysis.
 
 ---
 
@@ -96,13 +96,13 @@ Hard gates, rubric weights, scoring breakpoints, and risk thresholds are all def
 | Account not active | `account_status !== 'ACCOUNT_IS_ACTIVE'` | Account status check |
 | Railsr dispute | `railsr_disputes_last_6_months > 0` | Railsr dispute filed in last 6 months |
 
-### Risk Scoring Rubric (0–108 scale)
+### Risk Scoring Rubric (0–98 scale)
 
 **Account Trust (max 58 points):**
-- Account age: 20 pts (365+ days), 12 pts (180+), 5 pts (90+)
-- Tier: E=10, D=8, C=5 pts
+- Account age: 20 pts (≥365 days), 18 pts (≥180), 5 pts (≥90)
+- Tier: E=10, D=8, C=5, B=2 pts
 - Money maker badge: 15 pts
-- Trust score: GREEN=8, AMBER=4 pts
+- Trust score: GREEN=8, AMBER=4, BLUE=2 pts
 - Transaction activity: 5 pts if `tx_count_90_days >= 5`
 
 **Dispute History (max 30 points):**
@@ -110,8 +110,9 @@ Hard gates, rubric weights, scoring breakpoints, and risk thresholds are all def
 - Recent dispute penalty: −5 if any in last 30 days
 - Scam victim penalty: −5 if `victim_count > 0`
 
-**Transaction Risk (max 20 points):**
-- Amount: <£5=20 pts, <£10=14 pts, <£15=9 pts, <£25=5 pts
+**Transaction Risk (max 10 points):**
+- Amount: `< £25` = 5 pts
+- Crime reference: +5 pts if present (derived from `case_actions` where `action_type='DISPUTE_FORM_FILLED'` and `metadata.crime_ref_number` is set)
 
 **Risk level thresholds:** green ≥ 70, amber ≥ 40, red < 40. Any hard gate trigger = red.
 
@@ -123,8 +124,8 @@ The planner receives a JSON context package:
 {
   "dispute_profile": {
     "risk_level": "green | amber | red",
-    "rubric_score": 0-108,
-    "category_scores": { "account_trust": 0-58, "dispute_history": 0-30, "transaction_risk": 0-20 },
+    "rubric_score": 0-98,
+    "category_scores": { "account_trust": 0-58, "dispute_history": 0-30, "transaction_risk": 0-10 },
     "risk_factors": ["human-readable risk descriptions"]
   },
   "raw_signals": {
@@ -190,9 +191,9 @@ The data structure stored per pipeline run and surfaced in WorkStation:
   "version": "1.0",
   "dispute_profile": {
     "risk_level": "green | amber | red",
-    "rubric_score": 0-108,
+    "rubric_score": 0-98,
     "category_scores": { "account_trust", "dispute_history", "transaction_risk" },
-    "signals": "full raw signals from BigQuery",
+    "signals": "full CaseSignalsRaw object from BigQuery (13 risk signals + case/transaction metadata)",
     "risk_factors": ["human-readable descriptions"]
   },
   "hard_gate_result": {
