@@ -89,7 +89,7 @@ money_maker AS (
 ),
 trust_score_data AS (
   SELECT score_color AS trust_score
-  FROM \`anna-money.expiring_tables.compliance_trust_score_changes\`
+  FROM \`anna-money.verified_views.compliance_trust_score_changes\`
   WHERE company_id = (SELECT company_id FROM case_data)
     AND day <= DATE((SELECT case_created_at FROM case_data))
   ORDER BY day DESC
