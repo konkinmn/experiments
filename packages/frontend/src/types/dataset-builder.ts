@@ -1,6 +1,6 @@
 // --- Pipeline types (shared across dataset builder) ---
 
-export type RiskLevel = 'green' | 'amber' | 'red';
+export type RiskLevel = 'GREEN' | 'AMBER' | 'RED';
 
 export interface CaseSignalsRaw {
   case_id: number;
@@ -25,49 +25,48 @@ export interface CaseSignalsRaw {
   railsr_disputes_last_30_days: number;
 }
 
-export interface HardGateSignals {
-  cifas: boolean;
-  railsr_dispute_last_6_months: boolean;
-  confirmed_scammer: boolean;
-  account_not_active: boolean;
+export interface ScoringBreakdownItem {
+  signal: string;
+  value: unknown;
+  points: number;
+  max_points: number;
 }
 
 export interface DisputeProfile {
-  case_id: number;
-  alias: string;
-  company_id: number;
+  score: number;
+  score_max: number;
   risk_level: RiskLevel;
-  total_amount: number;
-  max_transaction_amount: number;
-  merchants: string;
-  account_age_days: number;
-  account_status: string;
-  tier_name: string | null;
-  is_money_maker: boolean;
-  trust_score: string | null;
-  rubric_score: number;
-  category_scores: {
-    account_trust: number;
-    dispute_history: number;
-    transaction_risk: number;
-  };
+  category_scores: Record<string, number>; // ACCOUNT_TRUST, DISPUTE_HISTORY, TRANSACTION_RISK
+  breakdown: ScoringBreakdownItem[];
   risk_factors: string[];
 }
 
+export interface GateCheckResult {
+  gate: string; // CIFAS | SCAMMER | ACCOUNT_NOT_ACTIVE | RAILSR_DISPUTE
+  passed: boolean;
+  detail: string;
+}
+
+export interface HardGateResult {
+  passed: boolean;
+  results: GateCheckResult[];
+  triggered_gate: string | null;
+}
+
 export interface PlannerArgs {
-  is_dispute: false;
+  is_dispute: boolean;
   is_fraud: boolean;
-  credit_mode: 'IMMEDIATELY';
-  reason: string;
-  fraud_type?: string;
-  fraud_sub_type?: string;
-  crime_reference?: string;
+  credit_mode: 'IMMEDIATELY' | 'ON_WIN' | 'ON_CHARGEBACK_NOTIFICATION';
+  reason: 'NOT_AUTHORISED' | 'DIFFERENT_AMOUNT' | 'DUPLICATE' | 'NO_FUNDS_FROM_ATM' | 'OTHER';
+  fraud_type: string | null;
+  fraud_sub_type: string | null;
+  crime_reference: string | null;
 }
 
 export interface PlannerOutput {
   thought: string;
   decision: 'credit' | 'escalate_to_agent';
-  args?: PlannerArgs;
+  args: PlannerArgs | null;
   uncertainty_factors: string[];
 }
 
@@ -75,26 +74,15 @@ export type PlannerDecision = PlannerOutput['decision'];
 
 // Stable contract for the AI iteration artifact (projection of pipeline run data)
 export interface AIIterationArtifact {
-  version: '1.0';
-  dispute_profile: {
-    risk_level: RiskLevel;
-    rubric_score: number;
-    category_scores: {
-      account_trust: number;
-      dispute_history: number;
-      transaction_risk: number;
-    };
-    signals: CaseSignalsRaw;
-    risk_factors: string[];
-  };
-  hard_gate_result: {
-    passed: boolean;
-    triggered_gate: string | null;
-  };
+  version: '2.0';
+  engine: string;
+  dispute_profile: DisputeProfile | null;
+  hard_gate_result: HardGateResult | null;
   planner_output: PlannerOutput | null;
   enrichment: {
     model: string;
     prompt_version: string;
+    prompt_md5: string | null;
     files_parsed: number;
     files_failed: number;
     dialogues_fetched: number;
@@ -111,15 +99,17 @@ export interface AIIterationArtifact {
 export interface PipelineResult {
   id: number;
   caseId: number;
+  engine: string;
   rawSignals: CaseSignalsRaw;
   caseDetails: unknown | null;
-  disputeProfile: DisputeProfile;
-  hardGates: HardGateSignals;
+  disputeProfile: DisputeProfile | null;
+  hardGates: HardGateResult | null;
   hardGateTriggered: string | null;
   plannerOutput: PlannerOutput | null;
   executorAction: string;
   pipelineDurationMs: number;
   promptVersion: string | null;
+  promptMd5: string | null;
   plannerRawResponse: string | null;
   plannerRequest: Record<string, unknown> | null;
   plannerSystemPrompt: string | null;
@@ -206,44 +196,10 @@ export interface DatasetCase {
   createdAt: string;
 }
 
-export interface RubricWeights {
-  account_trust_max: number;
-  dispute_history_max: number;
-  transaction_risk_max: number;
-  green_threshold: number;
-  amber_threshold: number;
-}
-
-export interface HardGateConfig {
-  cifas: boolean;
-  confirmed_scammer: boolean;
-  account_not_active: boolean;
-  railsr_dispute_last_6_months: boolean;
-}
-
-export interface RubricScoringRules {
-  account_age: Array<{ min_days: number; points: number }>;
-  tier: Record<string, number>;
-  money_maker_points: number;
-  trust_score: Record<string, number>;
-  tx_activity: { min_count: number; points: number };
-  dispute_history: Array<{ max_disputes: number; points: number }>;
-  recent_dispute_penalty: number;
-  scam_victim_penalty: number;
-  amount_brackets: Array<{ max_amount: number; points: number }>;
-}
-
-export interface PipelineConfig {
-  hard_gates: HardGateConfig;
-  rubric_weights: RubricWeights;
-  scoring_rules: RubricScoringRules;
-}
-
 export interface RunConfig {
   model: string;
   prompt_version: string;
   prompt_content?: string;
-  pipeline_config: PipelineConfig;
   name: string;
 }
 
@@ -287,12 +243,6 @@ export interface DatasetRunCase {
   agreement: boolean | null;
 }
 
-export interface RunOptions {
-  default_model: string;
-  default_prompt: { id: string; content: string };
-  default_pipeline_config: PipelineConfig;
-}
-
 // --- Analytics types ---
 
 export interface SegmentMetrics {
@@ -330,7 +280,6 @@ export interface DatasetAnalytics {
     by_risk_level: Record<string, SegmentMetrics>;
     by_dispute_type: Record<string, SegmentMetrics>;
     by_hard_gate: Record<string, SegmentMetrics>;
-    by_rubric_bucket: Record<string, SegmentMetrics>;
     by_label_confidence: Record<string, SegmentMetrics>;
   };
   disagreement_breakdown: Record<string, DisagreementBreakdownEntry>;

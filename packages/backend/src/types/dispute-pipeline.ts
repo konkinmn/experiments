@@ -1,4 +1,4 @@
-export type RiskLevel = 'green' | 'amber' | 'red';
+export type RiskLevel = 'GREEN' | 'AMBER' | 'RED';
 
 export interface DialogueMessage {
   role: string;
@@ -54,49 +54,48 @@ export interface CaseSignalsRaw {
   railsr_disputes_last_30_days: number;
 }
 
-export interface HardGateSignals {
-  cifas: boolean;
-  railsr_dispute_last_6_months: boolean;
-  confirmed_scammer: boolean;
-  account_not_active: boolean;
+export interface AnnaCaseScoringBreakdownItem {
+  signal: string;
+  value: unknown;
+  points: number;
+  max_points: number;
 }
 
 export interface DisputeProfile {
-  case_id: number;
-  alias: string;
-  company_id: number;
+  score: number;
+  score_max: number;
   risk_level: RiskLevel;
-  total_amount: number;
-  max_transaction_amount: number;
-  merchants: string;
-  account_age_days: number;
-  account_status: string;
-  tier_name: string | null;
-  is_money_maker: boolean;
-  trust_score: string | null;
-  rubric_score: number;
-  category_scores: {
-    account_trust: number;
-    dispute_history: number;
-    transaction_risk: number;
-  };
+  category_scores: Record<string, number>; // ACCOUNT_TRUST, DISPUTE_HISTORY, TRANSACTION_RISK
+  breakdown: AnnaCaseScoringBreakdownItem[];
   risk_factors: string[];
 }
 
+export interface AnnaCaseGateCheckResult {
+  gate: string; // CIFAS | SCAMMER | ACCOUNT_NOT_ACTIVE | RAILSR_DISPUTE
+  passed: boolean;
+  detail: string;
+}
+
+export interface HardGateResult {
+  passed: boolean;
+  results: AnnaCaseGateCheckResult[];
+  triggered_gate: string | null;
+}
+
 export interface PlannerArgs {
-  is_dispute: false;
+  is_dispute: boolean;
   is_fraud: boolean;
-  credit_mode: 'IMMEDIATELY';
-  reason: string;
-  fraud_type?: string | null;
-  fraud_sub_type?: string | null;
-  crime_reference?: string | null;
+  credit_mode: 'IMMEDIATELY' | 'ON_WIN' | 'ON_CHARGEBACK_NOTIFICATION';
+  reason: 'NOT_AUTHORISED' | 'DIFFERENT_AMOUNT' | 'DUPLICATE' | 'NO_FUNDS_FROM_ATM' | 'OTHER';
+  fraud_type: string | null;
+  fraud_sub_type: string | null;
+  crime_reference: string | null;
 }
 
 export interface PlannerOutput {
   thought: string;
   decision: 'credit' | 'escalate_to_agent';
-  args?: PlannerArgs;
+  args: PlannerArgs | null;
   uncertainty_factors: string[];
 }
 
@@ -105,13 +104,15 @@ export interface PipelineRunRow {
   case_id: number;
   raw_signals: CaseSignalsRaw;
   case_details: unknown | null;
-  dispute_profile: DisputeProfile;
-  hard_gates: HardGateSignals;
+  dispute_profile: DisputeProfile | null;
+  hard_gates: HardGateResult | null;
   hard_gate_triggered: string | null;
   planner_output: PlannerOutput | null;
   executor_action: string;
   pipeline_duration_ms: number;
   prompt_version: string | null;
+  prompt_md5: string | null;
+  engine: string;
   planner_raw_response: string | null;
   case_actions: CaseAction[] | null;
   planner_request: Record<string, unknown> | null;
@@ -129,13 +130,15 @@ export interface PipelineRunInsert {
   case_id: number;
   raw_signals: CaseSignalsRaw;
   case_details: unknown | null;
-  dispute_profile: DisputeProfile;
-  hard_gates: HardGateSignals;
+  dispute_profile: DisputeProfile | null;
+  hard_gates: HardGateResult | null;
   hard_gate_triggered: string | null;
   planner_output: PlannerOutput | null;
   executor_action: string;
   pipeline_duration_ms: number;
   prompt_version: string | null;
+  prompt_md5: string | null;
+  engine: string;
   planner_raw_response: string | null;
   case_actions: CaseAction[] | null;
   planner_request: Record<string, unknown> | null;
@@ -150,26 +153,15 @@ export interface PipelineRunInsert {
 // Pure projection of PipelineRunRow — no new storage, no duplication.
 
 export interface AIIterationArtifact {
-  version: '1.0';
-  dispute_profile: {
-    risk_level: RiskLevel;
-    rubric_score: number;
-    category_scores: {
-      account_trust: number;
-      dispute_history: number;
-      transaction_risk: number;
-    };
-    signals: CaseSignalsRaw;
-    risk_factors: string[];
-  };
-  hard_gate_result: {
-    passed: boolean;
-    triggered_gate: string | null;
-  };
+  version: '2.0';
+  engine: string;
+  dispute_profile: DisputeProfile | null;
+  hard_gate_result: HardGateResult | null;
   planner_output: PlannerOutput | null;
   enrichment: {
     model: string;
     prompt_version: string;
+    prompt_md5: string | null;
     files_parsed: number;
     files_failed: number;
     dialogues_fetched: number;
@@ -186,22 +178,15 @@ export interface AIIterationArtifact {
 export function buildArtifactFromRun(row: PipelineRunRow): AIIterationArtifact {
   const meta = (row.enrichment_metadata ?? {}) as Record<string, number | string>;
   return {
-    version: '1.0',
-    dispute_profile: {
-      risk_level: row.dispute_profile.risk_level,
-      rubric_score: row.dispute_profile.rubric_score,
-      category_scores: row.dispute_profile.category_scores,
-      signals: row.raw_signals,
-      risk_factors: row.dispute_profile.risk_factors,
-    },
-    hard_gate_result: {
-      passed: !row.hard_gate_triggered,
-      triggered_gate: row.hard_gate_triggered,
-    },
+    version: '2.0',
+    engine: row.engine,
+    dispute_profile: row.dispute_profile,
+    hard_gate_result: row.hard_gates,
     planner_output: row.planner_output,
     enrichment: {
       model: (meta.model as string) ?? 'unknown',
       prompt_version: row.prompt_version ?? 'unknown',
+      prompt_md5: row.prompt_md5,
       files_parsed: (meta.files_parsed as number) ?? 0,
       files_failed: (meta.files_failed as number) ?? 0,
       dialogues_fetched: (meta.dialogues_fetched as number) ?? 0,
@@ -222,6 +207,7 @@ export function formatPipelineRun(row: PipelineRunRow) {
   return {
     id: row.id,
     caseId: row.case_id,
+    engine: row.engine,
     rawSignals: row.raw_signals,
     caseDetails: row.case_details,
     disputeProfile: row.dispute_profile,
@@ -231,6 +217,7 @@ export function formatPipelineRun(row: PipelineRunRow) {
     executorAction: row.executor_action,
     pipelineDurationMs: row.pipeline_duration_ms,
     promptVersion: row.prompt_version,
+    promptMd5: row.prompt_md5,
     plannerRawResponse: row.planner_raw_response,
     plannerRequest: row.planner_request,
     plannerSystemPrompt: row.planner_system_prompt,
@@ -246,64 +233,13 @@ export function formatPipelineRun(row: PipelineRunRow) {
   };
 }
 
-// --- Pipeline Configuration ---
-// All hardcoded pipeline rules as a configurable object.
-// Defaults match current production behavior. Override per run to test variations.
-
-export interface HardGateConfig {
-  cifas: boolean;                 // default: true
-  confirmed_scammer: boolean;     // default: true
-  account_not_active: boolean;    // default: true
-  railsr_dispute_last_6_months: boolean; // default: true
-}
-
-export interface RubricWeights {
-  account_trust_max: number;      // default 58
-  dispute_history_max: number;    // default 30
-  transaction_risk_max: number;   // default 20
-  green_threshold: number;        // default 70
-  amber_threshold: number;        // default 40
-}
-
-export interface RubricScoringRules {
-  // Account age breakpoints: [threshold_days, points]
-  account_age: Array<{ min_days: number; points: number }>;
-  // Tier points: tier_name → points
-  tier: Record<string, number>;
-  // Money maker bonus
-  money_maker_points: number;
-  // Trust score points: score_level → points
-  trust_score: Record<string, number>;
-  // Transaction activity threshold
-  tx_activity: { min_count: number; points: number };
-  // Dispute history: [max_disputes_6m, points]
-  dispute_history: Array<{ max_disputes: number; points: number }>;
-  // Recent dispute penalty
-  recent_dispute_penalty: number;
-  // Scam victim penalty
-  scam_victim_penalty: number;
-  // Amount brackets: [max_amount, points]
-  amount_brackets: Array<{ max_amount: number; points: number }>;
-  // Crime reference bonus points (contextual)
-  crime_reference_points: number;
-}
-
-export interface PipelineConfig {
-  hard_gates: HardGateConfig;
-  rubric_weights: RubricWeights;
-  scoring_rules: RubricScoringRules;
-}
-
 // --- Dataset Run types ---
 
 export interface RunConfig {
   model: string;                  // e.g. 'claude-sonnet-4-6'
-  prompt_version: string;         // e.g. 'dispute-planner-v1' or 'custom'
+  prompt_version: string;         // anna-case prompt version captured at run-start
   prompt_content?: string;        // full prompt text (stored per run for reproducibility)
-  pipeline_config: PipelineConfig; // full pipeline config (gates, weights, scoring rules)
   name: string;                   // human-readable run name
-  // Legacy field — kept for backward compatibility with existing runs
-  rubric_weights?: RubricWeights;
 }
 
 export interface DatasetRun {
@@ -400,4 +336,3 @@ export interface DatasetCaseRow {
 export interface DatasetCaseWithRun extends DatasetCaseRow {
   pipeline_run: PipelineRunRow | null;
 }
-

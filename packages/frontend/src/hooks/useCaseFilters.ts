@@ -2,9 +2,9 @@ import { useState, useMemo } from 'react';
 import type { DatasetCase } from '@/types';
 
 export type LabelFilter = 'all' | 'credit' | 'escalate' | 'undecided' | 'unlabeled';
-export type RiskFilter = 'all' | 'green' | 'amber' | 'red';
+export type RiskFilter = 'all' | 'GREEN' | 'AMBER' | 'RED';
 export type HardGateFilter = 'all' | 'hit' | 'clear';
-export type SortOption = 'default' | 'risk' | 'rubric' | 'amount' | 'account_age';
+export type SortOption = 'default' | 'risk' | 'score' | 'amount' | 'account_age';
 export type AgreementFilter = 'all' | 'agree' | 'disagree' | 'no-label';
 export type FilterMode = 'dataset' | 'run';
 
@@ -23,7 +23,7 @@ export interface CaseFilterState {
   mode: FilterMode;
 }
 
-const RISK_ORDER: Record<string, number> = { red: 0, amber: 1, green: 2 };
+const RISK_ORDER: Record<string, number> = { RED: 0, AMBER: 1, GREEN: 2 };
 
 export function useCaseFilters(cases: DatasetCase[], mode: FilterMode = 'run'): CaseFilterState {
   const [labelFilter, setLabelFilter] = useState<LabelFilter>('all');
@@ -43,8 +43,9 @@ export function useCaseFilters(cases: DatasetCase[], mode: FilterMode = 'run'): 
     // Risk and hard gate filters only apply in run mode (pipeline data required)
     if (mode === 'run') {
       if (riskFilter !== 'all') {
+        const target = riskFilter.toUpperCase();
         result = result.filter(
-          (c) => c.pipelineRun?.disputeProfile.risk_level === riskFilter,
+          (c) => (c.pipelineRun?.disputeProfile?.risk_level ?? '').toUpperCase() === target,
         );
       }
 
@@ -66,14 +67,14 @@ export function useCaseFilters(cases: DatasetCase[], mode: FilterMode = 'run'): 
       });
     } else if (sortOption === 'risk') {
       result = [...result].sort((a, b) => {
-        const aRisk = RISK_ORDER[a.pipelineRun?.disputeProfile.risk_level ?? ''] ?? 3;
-        const bRisk = RISK_ORDER[b.pipelineRun?.disputeProfile.risk_level ?? ''] ?? 3;
+        const aRisk = RISK_ORDER[(a.pipelineRun?.disputeProfile?.risk_level ?? '').toUpperCase()] ?? 3;
+        const bRisk = RISK_ORDER[(b.pipelineRun?.disputeProfile?.risk_level ?? '').toUpperCase()] ?? 3;
         return aRisk - bRisk || a.caseId - b.caseId;
       });
-    } else if (sortOption === 'rubric') {
+    } else if (sortOption === 'score') {
       result = [...result].sort((a, b) => {
-        const aScore = a.pipelineRun?.disputeProfile.rubric_score ?? -1;
-        const bScore = b.pipelineRun?.disputeProfile.rubric_score ?? -1;
+        const aScore = a.pipelineRun?.disputeProfile?.score ?? -1;
+        const bScore = b.pipelineRun?.disputeProfile?.score ?? -1;
         return bScore - aScore || a.caseId - b.caseId;
       });
     } else if (sortOption === 'amount') {

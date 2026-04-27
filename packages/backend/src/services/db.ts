@@ -407,6 +407,23 @@ async function applyMigrations(): Promise<void> {
       );
     }
 
+    const { rows: engineCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dispute_pipeline_runs' AND column_name = 'engine'`,
+    );
+    if (engineCol.length === 0) {
+      await pool.query(`ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS engine TEXT`);
+      await pool.query(`UPDATE dispute_pipeline_runs SET engine = 'experiments-v1' WHERE engine IS NULL`);
+      await pool.query(`ALTER TABLE dispute_pipeline_runs ALTER COLUMN engine SET NOT NULL`);
+    }
+    const { rows: promptMd5Col } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'dispute_pipeline_runs' AND column_name = 'prompt_md5'`,
+    );
+    if (promptMd5Col.length === 0) {
+      await pool.query(`ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS prompt_md5 TEXT`);
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -515,23 +532,25 @@ export async function insertPipelineRun(row: PipelineRunInsert): Promise<Pipelin
   const pool = getPool();
   const { rows } = await pool.query<PipelineRunRow>(
     `INSERT INTO dispute_pipeline_runs
-       (case_id, raw_signals, case_details, dispute_profile, hard_gates, hard_gate_triggered,
-        planner_output, executor_action, pipeline_duration_ms, prompt_version, planner_raw_response,
-        case_actions, planner_request, planner_system_prompt, file_parse_results,
-        dialogue_messages, enrichment_metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+       (case_id, engine, raw_signals, case_details, dispute_profile, hard_gates, hard_gate_triggered,
+        planner_output, executor_action, pipeline_duration_ms, prompt_version, prompt_md5,
+        planner_raw_response, case_actions, planner_request, planner_system_prompt,
+        file_parse_results, dialogue_messages, enrichment_metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
      RETURNING *`,
     [
       row.case_id,
+      row.engine,
       JSON.stringify(row.raw_signals),
       row.case_details ? JSON.stringify(row.case_details) : null,
-      JSON.stringify(row.dispute_profile),
-      JSON.stringify(row.hard_gates),
+      row.dispute_profile ? JSON.stringify(row.dispute_profile) : null,
+      row.hard_gates ? JSON.stringify(row.hard_gates) : null,
       row.hard_gate_triggered,
       row.planner_output ? JSON.stringify(row.planner_output) : null,
       row.executor_action,
       row.pipeline_duration_ms,
       row.prompt_version,
+      row.prompt_md5,
       row.planner_raw_response,
       row.case_actions ? JSON.stringify(row.case_actions) : null,
       row.planner_request ? JSON.stringify(row.planner_request) : null,
@@ -1254,7 +1273,7 @@ export async function getDatasetAnalytics(
     };
   }
 
-  // Analytics for a specific run — compute auto_tags from pipeline run data
+  // LOWER() bridges experiments-v1 (lowercase) and anna-case (uppercase) risk_level.
   const { rows } = await pool.query<{
     auto_tags: Record<string, string | boolean>;
     label: string | null;
@@ -1266,14 +1285,8 @@ export async function getDatasetAnalytics(
   }>(
     `SELECT
        jsonb_build_object(
-         'risk_level', COALESCE(pr.dispute_profile->>'risk_level', 'unknown'),
+         'risk_level', LOWER(COALESCE(pr.dispute_profile->>'risk_level', 'unknown')),
          'hard_gate_hit', COALESCE(pr.hard_gate_triggered IS NOT NULL, false),
-         'rubric_score_bucket', CASE
-           WHEN pr.dispute_profile IS NULL THEN 'unknown'
-           WHEN COALESCE((pr.dispute_profile->>'rubric_score')::int, 0) >= 70 THEN '70-108'
-           WHEN COALESCE((pr.dispute_profile->>'rubric_score')::int, 0) >= 40 THEN '40-69'
-           ELSE '0-39'
-         END,
          'amount_bucket', CASE
            WHEN pr.raw_signals IS NULL THEN 'unknown'
            WHEN COALESCE((pr.raw_signals->>'total_amount')::numeric, 0) < 25 THEN 'under_25'

@@ -756,9 +756,9 @@ function RunTab({ run, datasetId, onDeleted }: { run: DatasetRun; datasetId: num
         decisionEscalate++;
       }
       const risk = pr.disputeProfile?.risk_level;
-      if (risk === 'green') riskGreen++;
-      else if (risk === 'amber') riskAmber++;
-      else if (risk === 'red') riskRed++;
+      if (risk === 'GREEN') riskGreen++;
+      else if (risk === 'AMBER') riskAmber++;
+      else if (risk === 'RED') riskRed++;
       if (pr.pipelineDurationMs) { totalDuration += pr.pipelineDurationMs; durationCount++; }
     }
 

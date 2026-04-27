@@ -39,8 +39,7 @@ import {
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
 import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig, CaseContext, CaseSignalsRaw, CaseAction, DialogueMessage } from '../types/dispute-pipeline.js';
-import { DEFAULT_PIPELINE_CONFIG } from '../services/dispute-pipeline.js';
-import { getPromptById } from '../services/prompts.js';
+import { loadAnnaCasePrompt } from '../services/anna-case-bridge.js';
 import { computeFullAnalytics, computeRunComparison } from '../services/dataset-analytics.js';
 
 const CreateDatasetSchema = z.object({
@@ -131,21 +130,7 @@ async function runWithConcurrency<T>(
   return results;
 }
 
-const DEFAULT_MODEL = process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929';
-const DEFAULT_PROMPT_ID = 'dispute-planner-v1';
-
 export async function datasetRoutes(app: FastifyInstance) {
-  // GET /run-options — Default model, prompt, and pipeline config
-  app.get('/run-options', async () => {
-    const prompt = await getPromptById(DEFAULT_PROMPT_ID);
-    return {
-      default_model: DEFAULT_MODEL,
-      default_prompt: prompt
-        ? { id: prompt.id, content: prompt.content }
-        : { id: DEFAULT_PROMPT_ID, content: '' },
-      default_pipeline_config: DEFAULT_PIPELINE_CONFIG,
-    };
-  });
 
   // GET / — List all datasets with labeled/total counts
   app.get('/', async () => {
@@ -516,44 +501,6 @@ export async function datasetRoutes(app: FastifyInstance) {
   const CreateRunSchema = z.object({
     name: z.string().min(1),
     description: z.string().nullable().optional(),
-    model: z.string().min(1),
-    prompt_version: z.string().min(1),
-    prompt_content: z.string().optional(),
-    pipeline_config: z.object({
-      hard_gates: z.object({
-        cifas: z.boolean(),
-        confirmed_scammer: z.boolean(),
-        account_not_active: z.boolean(),
-        railsr_dispute_last_6_months: z.boolean(),
-      }),
-      rubric_weights: z.object({
-        account_trust_max: z.number(),
-        dispute_history_max: z.number(),
-        transaction_risk_max: z.number(),
-        green_threshold: z.number(),
-        amber_threshold: z.number(),
-      }),
-      scoring_rules: z.object({
-        account_age: z.array(z.object({ min_days: z.number(), points: z.number() })),
-        tier: z.record(z.number()),
-        money_maker_points: z.number(),
-        trust_score: z.record(z.number()),
-        tx_activity: z.object({ min_count: z.number(), points: z.number() }),
-        dispute_history: z.array(z.object({ max_disputes: z.number(), points: z.number() })),
-        recent_dispute_penalty: z.number(),
-        scam_victim_penalty: z.number(),
-        amount_brackets: z.array(z.object({ max_amount: z.number(), points: z.number() })),
-        crime_reference_points: z.number().default(5),
-      }),
-    }).optional(),
-    // Legacy: accept rubric_weights directly for backward compatibility
-    rubric_weights: z.object({
-      account_trust_max: z.number(),
-      dispute_history_max: z.number(),
-      transaction_risk_max: z.number(),
-      green_threshold: z.number(),
-      amber_threshold: z.number(),
-    }).optional(),
   });
 
   // POST /:id/runs — Create and execute a dataset run
@@ -571,15 +518,21 @@ export async function datasetRoutes(app: FastifyInstance) {
     try {
       const body = CreateRunSchema.parse(request.body);
 
+      let promptContent: string | undefined;
+      let promptVersion = 'anna-case';
+      try {
+        const prompt = await loadAnnaCasePrompt();
+        promptContent = prompt.content;
+        promptVersion = `anna-case:${prompt.md5.slice(0, 8)}`;
+      } catch (err) {
+        app.log.warn({ err }, 'Failed to snapshot anna-case prompt at run creation');
+      }
+
       const runConfig: RunConfig = {
-        model: body.model,
-        prompt_version: body.prompt_version,
-        prompt_content: body.prompt_content,
-        pipeline_config: body.pipeline_config ?? {
-          ...DEFAULT_PIPELINE_CONFIG,
-          rubric_weights: body.rubric_weights ?? DEFAULT_PIPELINE_CONFIG.rubric_weights,
-        },
         name: body.name,
+        model: process.env.DISPUTE_PIPELINE_LLM_MODEL ?? 'gemini-2.5-flash',
+        prompt_version: promptVersion,
+        prompt_content: promptContent,
       };
 
       // 1. Insert run row

@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
-import type { PipelineResult, RiskLevel, CaseSignalsRaw, DatasetCase, DatasetLabel } from '@/types';
+import type { PipelineResult, RiskLevel, CaseSignalsRaw, DatasetCase, DatasetLabel, DisputeProfile } from '@/types';
 
 const WS_CASE_URL = (alias: string, caseId: number) =>
   `https://chat-workstation.k1.anna.money/${alias}/tasks/cases?caseId=${caseId}`;
@@ -33,11 +33,17 @@ interface ResultsTableProps {
   actionNotes?: Record<number, string | null>;
 }
 
-const RISK_BADGE: Record<RiskLevel, { label: string; variant: 'green' | 'amber' | 'red' }> = {
-  green: { label: 'Green', variant: 'green' },
-  amber: { label: 'Amber', variant: 'amber' },
-  red: { label: 'Red', variant: 'red' },
+const RISK_BADGE: Record<string, { label: string; variant: 'green' | 'amber' | 'red' }> = {
+  GREEN: { label: 'Green', variant: 'green' },
+  AMBER: { label: 'Amber', variant: 'amber' },
+  RED: { label: 'Red', variant: 'red' },
 };
+
+function riskBadge(level: RiskLevel | string | undefined | null) {
+  if (!level) return { label: '—', variant: 'amber' as const };
+  const key = typeof level === 'string' ? level.toUpperCase() : level;
+  return RISK_BADGE[key] ?? { label: String(level), variant: 'amber' as const };
+}
 
 const DECISION_BADGE: Record<string, { label: string; variant: 'green' | 'amber' | 'red' }> = {
   credit: { label: 'Credit', variant: 'green' },
@@ -51,6 +57,10 @@ const LABEL_BADGE: Record<DatasetLabel, { label: string; variant: 'green' | 'amb
 };
 
 const HARD_GATE_LABELS: Record<string, string> = {
+  CIFAS: 'CIFAS marker',
+  SCAMMER: 'Confirmed scammer',
+  ACCOUNT_NOT_ACTIVE: 'Account inactive',
+  RAILSR_DISPUTE: 'Railsr dispute (6m)',
   cifas: 'CIFAS marker',
   railsr_dispute_last_6_months: 'Railsr dispute (6m)',
   confirmed_scammer: 'Confirmed scammer',
@@ -79,38 +89,6 @@ const RAW_SIGNAL_LABELS: Record<keyof CaseSignalsRaw, string> = {
   railsr_disputes_last_6_months: 'Railsr Disputes (6 months)',
   railsr_disputes_last_30_days: 'Railsr Disputes (30 days)',
 };
-
-// Rubric scoring rules — must match backend computeRubricScore()
-const TIER_POINTS: Record<string, number> = { E: 10, D: 8, C: 5 };
-
-function accountAgePts(days: number): number {
-  if (days >= 365) return 20;
-  if (days >= 180) return 12;
-  if (days >= 90) return 5;
-  return 0;
-}
-
-function trustScorePts(score: string | null): number {
-  const s = score?.toUpperCase();
-  if (s === 'GREEN') return 8;
-  if (s === 'AMBER') return 4;
-  return 0;
-}
-
-function disputes6mPts(count: number): number {
-  if (count === 0) return 30;
-  if (count <= 2) return 15;
-  if (count <= 4) return 5;
-  return 0;
-}
-
-function maxTxnPts(amount: number): number {
-  if (amount < 5) return 20;
-  if (amount < 10) return 14;
-  if (amount < 15) return 9;
-  if (amount <= 25) return 5;
-  return 0;
-}
 
 interface ChatFetchFailure {
   dialogue_id: number;
@@ -284,7 +262,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
           // For pipeline run data (run tabs or legacy datasets), use original rendering
           if (hasPipelineRun && !hasContext) {
             const r = dc.pipelineRun!;
-            const risk = RISK_BADGE[r.disputeProfile.risk_level];
+            const risk = riskBadge(r.disputeProfile?.risk_level);
             const decision = r.hardGateTriggered
               ? { label: 'Escalate', variant: 'amber' as const }
               : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
@@ -326,7 +304,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
   return (
     <div className="space-y-4">
       {results.map((r) => {
-        const risk = RISK_BADGE[r.disputeProfile.risk_level];
+        const risk = riskBadge(r.disputeProfile?.risk_level);
         const decision = r.hardGateTriggered
           ? { label: 'Escalate', variant: 'amber' as const }
           : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
@@ -849,6 +827,7 @@ function ExpandedDetail({
                 <h4 className="text-xs font-medium text-muted-foreground mb-1">Credit Args</h4>
                 <div className="text-sm space-y-0.5">
                   <p><span className="text-muted-foreground">Reason:</span> {result.plannerOutput.args.reason}</p>
+                  <p><span className="text-muted-foreground">Credit mode:</span> {result.plannerOutput.args.credit_mode}</p>
                   <p><span className="text-muted-foreground">Is fraud:</span> {String(result.plannerOutput.args.is_fraud)}</p>
                   {result.plannerOutput.args.fraud_type && (
                     <p><span className="text-muted-foreground">Fraud type:</span> {result.plannerOutput.args.fraud_type}</p>
@@ -874,81 +853,14 @@ function ExpandedDetail({
         </>
       )}
 
-      {/* Dispute Profile */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <h4 className="text-xs font-medium text-muted-foreground">Dispute Profile</h4>
-          <Badge variant={RISK_BADGE[result.disputeProfile.risk_level].variant}>
-            {RISK_BADGE[result.disputeProfile.risk_level].label} Risk
-          </Badge>
-          <span className="text-sm font-bold">
-            {result.disputeProfile.rubric_score}/108
-          </span>
-        </div>
-
-        {/* Score breakdown bar */}
-        <div className="mb-3">
-          <div className="flex h-3 rounded-full overflow-hidden bg-gray-100">
-            <div
-              className="bg-blue-400"
-              style={{ width: `${(result.disputeProfile.category_scores.account_trust / 108) * 100}%` }}
-              title={`Account Trust: ${result.disputeProfile.category_scores.account_trust}/58`}
-            />
-            <div
-              className="bg-purple-400"
-              style={{ width: `${(result.disputeProfile.category_scores.dispute_history / 108) * 100}%` }}
-              title={`Dispute History: ${result.disputeProfile.category_scores.dispute_history}/30`}
-            />
-            <div
-              className="bg-emerald-400"
-              style={{ width: `${(result.disputeProfile.category_scores.transaction_risk / 108) * 100}%` }}
-              title={`Transaction Risk: ${result.disputeProfile.category_scores.transaction_risk}/20`}
-            />
-          </div>
-          <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-blue-400" />
-              Account Trust: {result.disputeProfile.category_scores.account_trust}/58
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-purple-400" />
-              Dispute History: {result.disputeProfile.category_scores.dispute_history}/30
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
-              Txn Risk: {result.disputeProfile.category_scores.transaction_risk}/20
-            </span>
-          </div>
-        </div>
-
-        {/* Signal details */}
-        <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
-          {/* Left column — Account signals */}
-          <div className="space-y-1">
-            <SignalRow label="Account Age" value={`${result.disputeProfile.account_age_days} days`} pts={accountAgePts(result.disputeProfile.account_age_days)} />
-            <SignalRow label="Tier" value={result.disputeProfile.tier_name ?? '—'} pts={TIER_POINTS[result.disputeProfile.tier_name?.toUpperCase() ?? ''] ?? 0} />
-            <SignalRow label="Money Maker" value={result.disputeProfile.is_money_maker ? 'Yes' : 'No'} pts={result.disputeProfile.is_money_maker ? 15 : 0} />
-            <SignalRow label="Trust Score" value={result.disputeProfile.trust_score ?? '—'} pts={trustScorePts(result.disputeProfile.trust_score)} />
-            <SignalRow label="Txns (90d)" value={String(result.rawSignals.tx_count_90_days)} pts={result.rawSignals.tx_count_90_days >= 5 ? 5 : 0} />
-          </div>
-          {/* Right column — Risk signals */}
-          <div className="space-y-1">
-            <SignalRow label="Disputes (6m)" value={String(result.rawSignals.railsr_disputes_last_6_months)} pts={disputes6mPts(result.rawSignals.railsr_disputes_last_6_months)} />
-            <SignalRow label="Disputes (30d)" value={String(result.rawSignals.railsr_disputes_last_30_days)} pts={result.rawSignals.railsr_disputes_last_30_days > 0 ? -5 : 0} />
-            <SignalRow label="Scam Victim" value={String(result.rawSignals.scam_victim_count)} pts={result.rawSignals.scam_victim_count > 0 ? -5 : 0} />
-            <SignalRow label="Max Txn" value={`£${Number(result.disputeProfile.max_transaction_amount ?? 0).toFixed(2)}`} pts={maxTxnPts(Number(result.disputeProfile.max_transaction_amount ?? 0))} />
-            <SignalRow label="Merchants" value={result.disputeProfile.merchants ?? '—'} />
-          </div>
-        </div>
-
-        {result.disputeProfile.risk_factors.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {result.disputeProfile.risk_factors.map((f, i) => (
-              <Badge key={i} variant="amber">{f}</Badge>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Risk Scoring (anna-case `risk_scoring`) */}
+      {result.disputeProfile && (() => {
+        const profile = result.disputeProfile;
+        const rb = riskBadge(profile.risk_level);
+        return (
+          <DisputeProfileBlock profile={profile} riskLabel={rb} />
+        );
+      })()}
 
       {/* Enrichment Summary */}
       {result.enrichmentMetadata && (() => {
@@ -1408,6 +1320,95 @@ function ExpandedDetail({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function formatBreakdownValue(v: unknown): string {
+  if (v == null) return '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
+const CATEGORY_COLOR: Record<string, string> = {
+  account_trust: 'bg-blue-400',
+  dispute_history: 'bg-purple-400',
+  transaction_risk: 'bg-emerald-400',
+};
+
+const CATEGORY_LABEL: Record<string, string> = {
+  account_trust: 'Account Trust',
+  dispute_history: 'Dispute History',
+  transaction_risk: 'Transaction Risk',
+};
+
+function DisputeProfileBlock({
+  profile,
+  riskLabel,
+}: {
+  profile: DisputeProfile;
+  riskLabel: { label: string; variant: 'green' | 'amber' | 'red' };
+}) {
+  const scoreMax = profile.score_max || 1;
+  const categories = Object.keys(profile.category_scores ?? {});
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <h4 className="text-xs font-medium text-muted-foreground">Risk Scoring</h4>
+        <Badge variant={riskLabel.variant}>{riskLabel.label} Risk</Badge>
+        <span className="text-sm font-bold">
+          {profile.score}/{profile.score_max}
+        </span>
+      </div>
+
+      {/* Category bars — driven by category_scores from anna-case */}
+      <div className="mb-3">
+        <div className="flex h-3 rounded-full overflow-hidden bg-gray-100">
+          {categories.map((cat) => {
+            const score = profile.category_scores[cat] ?? 0;
+            return (
+              <div
+                key={cat}
+                className={CATEGORY_COLOR[cat] ?? 'bg-gray-400'}
+                style={{ width: `${(score / scoreMax) * 100}%` }}
+                title={`${CATEGORY_LABEL[cat] ?? cat}: ${score}`}
+              />
+            );
+          })}
+        </div>
+        <div className="flex gap-4 mt-1.5 text-xs text-muted-foreground flex-wrap">
+          {categories.map((cat) => (
+            <span key={cat} className="flex items-center gap-1">
+              <span className={`inline-block h-2 w-2 rounded-full ${CATEGORY_COLOR[cat] ?? 'bg-gray-400'}`} />
+              {CATEGORY_LABEL[cat] ?? cat}: {profile.category_scores[cat] ?? 0}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Per-signal breakdown — ground truth from anna-case */}
+      {profile.breakdown && profile.breakdown.length > 0 && (
+        <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
+          {profile.breakdown.map((item, i) => (
+            <SignalRow
+              key={`${item.signal}-${i}`}
+              label={item.signal}
+              value={formatBreakdownValue(item.value)}
+              pts={item.points}
+            />
+          ))}
+        </div>
+      )}
+
+      {profile.risk_factors && profile.risk_factors.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {profile.risk_factors.map((f, i) => (
+            <Badge key={i} variant="amber">{f}</Badge>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

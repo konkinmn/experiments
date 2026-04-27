@@ -12,8 +12,6 @@ import type {
   DatasetSourceType,
   DatasetRun,
   DatasetRunCase,
-  RunOptions,
-  PipelineConfig,
   DatasetAnalytics,
   RunComparisonResult,
 } from '@/types';
@@ -123,13 +121,10 @@ export const api = {
     }),
 
   // Dataset Runs API
-  getRunOptions: () =>
-    fetchApi<RunOptions>('/api/datasets/run-options'),
-
   getDatasetRuns: (datasetId: number) =>
     fetchApi<{ data: DatasetRun[] }>(`/api/datasets/${datasetId}/runs`),
 
-  createDatasetRun: (datasetId: number, config: { name: string; description?: string; model: string; prompt_version: string; prompt_content?: string; pipeline_config: PipelineConfig }) =>
+  createDatasetRun: (datasetId: number, config: { name: string; description?: string }) =>
     fetchApi<DatasetRun>(`/api/datasets/${datasetId}/runs`, {
       method: 'POST',
       body: JSON.stringify(config),

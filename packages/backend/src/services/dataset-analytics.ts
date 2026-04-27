@@ -32,7 +32,6 @@ export interface DatasetAnalyticsResult {
     by_risk_level: Record<string, SegmentMetrics>;
     by_dispute_type: Record<string, SegmentMetrics>;
     by_hard_gate: Record<string, SegmentMetrics>;
-    by_rubric_bucket: Record<string, SegmentMetrics>;
     by_label_confidence: Record<string, SegmentMetrics>;
   };
   disagreement_breakdown: DisagreementBreakdown;
@@ -125,7 +124,6 @@ export function computeFullAnalytics(
   const byRiskLevel: Record<string, AnalyticsRow[]> = {};
   const byDisputeType: Record<string, AnalyticsRow[]> = {};
   const byHardGate: Record<string, AnalyticsRow[]> = {};
-  const byRubricBucket: Record<string, AnalyticsRow[]> = {};
   const byLabelConfidence: Record<string, AnalyticsRow[]> = {};
 
   for (const r of rows) {
@@ -133,12 +131,10 @@ export function computeFullAnalytics(
     const riskLevel = String(tags.risk_level ?? 'unknown');
     const disputeType = String(tags.dispute_type ?? 'unknown');
     const hardGate = tags.hard_gate_hit ? 'hit' : 'clear';
-    const rubricBucket = String(tags.rubric_score_bucket ?? 'unknown');
 
     (byRiskLevel[riskLevel] ??= []).push(r);
     (byDisputeType[disputeType] ??= []).push(r);
     (byHardGate[hardGate] ??= []).push(r);
-    (byRubricBucket[rubricBucket] ??= []).push(r);
 
     if (r.label_confidence) {
       (byLabelConfidence[r.label_confidence] ??= []).push(r);
@@ -152,7 +148,6 @@ export function computeFullAnalytics(
       by_risk_level: mapValues(byRiskLevel, computeSegmentMetrics),
       by_dispute_type: mapValues(byDisputeType, computeSegmentMetrics),
       by_hard_gate: mapValues(byHardGate, computeSegmentMetrics),
-      by_rubric_bucket: mapValues(byRubricBucket, computeSegmentMetrics),
       by_label_confidence: mapValues(byLabelConfidence, computeSegmentMetrics),
     },
     disagreement_breakdown: computeDisagreementBreakdown(rows),

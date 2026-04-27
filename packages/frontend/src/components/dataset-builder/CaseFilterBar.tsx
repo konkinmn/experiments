@@ -59,9 +59,9 @@ export function CaseFilterBar({
               onChange={(e) => onRiskFilterChange(e.target.value as RiskFilter)}
             >
               <option value="all">All</option>
-              <option value="green">Green</option>
-              <option value="amber">Amber</option>
-              <option value="red">Red</option>
+              <option value="GREEN">Green</option>
+              <option value="AMBER">Amber</option>
+              <option value="RED">Red</option>
             </Select>
           </div>
 
@@ -107,7 +107,7 @@ export function CaseFilterBar({
           {mode === 'run' && (
             <>
               <option value="risk">Risk (red first)</option>
-              <option value="rubric">Rubric score (high first)</option>
+              <option value="score">Score (high first)</option>
             </>
           )}
           <option value="amount">Amount (high first)</option>

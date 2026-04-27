@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { DatasetLabel, DatasetSourceType, PipelineConfig } from '@/types';
+import type { DatasetLabel, DatasetSourceType } from '@/types';
 
 export function useDatasets() {
   return useQuery({
@@ -176,13 +176,6 @@ export function useDeleteDatasetRun() {
   });
 }
 
-export function useRunOptions() {
-  return useQuery({
-    queryKey: ['run-options'],
-    queryFn: () => api.getRunOptions(),
-  });
-}
-
 export function useDatasetRuns(datasetId: number, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['dataset-runs', datasetId],
@@ -205,17 +198,9 @@ export function useCreateRun() {
       datasetId: number;
       name: string;
       description?: string;
-      model: string;
-      prompt_version: string;
-      prompt_content?: string;
-      pipeline_config: PipelineConfig;
     }) => api.createDatasetRun(params.datasetId, {
       name: params.name,
       description: params.description,
-      model: params.model,
-      prompt_version: params.prompt_version,
-      prompt_content: params.prompt_content,
-      pipeline_config: params.pipeline_config,
     }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['dataset-runs', variables.datasetId] });

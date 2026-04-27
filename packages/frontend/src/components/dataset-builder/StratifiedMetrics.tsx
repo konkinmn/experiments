@@ -8,7 +8,6 @@ interface Props {
     by_risk_level: Record<string, SegmentMetrics>;
     by_dispute_type: Record<string, SegmentMetrics>;
     by_hard_gate: Record<string, SegmentMetrics>;
-    by_rubric_bucket: Record<string, SegmentMetrics>;
     by_label_confidence: Record<string, SegmentMetrics>;
   };
 }
@@ -17,7 +16,6 @@ const DIMENSION_LABELS: Record<string, string> = {
   by_risk_level: 'By Risk Level',
   by_dispute_type: 'By Dispute Type',
   by_hard_gate: 'By Hard Gate',
-  by_rubric_bucket: 'By Rubric Score',
   by_label_confidence: 'By Confidence',
 };
 
@@ -75,7 +73,6 @@ export function StratifiedMetrics({ stratified }: Props) {
     by_risk_level: true,
     by_dispute_type: false,
     by_hard_gate: false,
-    by_rubric_bucket: false,
     by_label_confidence: false,
   });
 
