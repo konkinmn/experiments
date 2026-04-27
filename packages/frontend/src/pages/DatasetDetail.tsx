@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Download, Trash2, Loader2, Plus, RefreshCw, Pencil } from 'lucide-react';
+import { ArrowLeft, Download, Trash2, Loader2, Plus, RefreshCw, Pencil, FilePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,6 +18,7 @@ import {
   useTagCase,
   useLabelDatasetCase2,
   useRefreshDataset,
+  useAddDatasetCases,
   useRetryRunCase,
   useRerunDatasetRun,
   useDeleteDatasetRun,
@@ -27,6 +28,16 @@ import {
 import { downloadXlsx, type ColumnDef } from '@/lib/download-xlsx';
 import type { DatasetCase, DatasetLabel, DatasetRun } from '@/types';
 import type { AgreementFilter } from '@/hooks/useCaseFilters';
+
+function parseCaseIds(input: string): number[] {
+  const ids = input
+    .split(/[\n,\s]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => parseInt(s, 10))
+    .filter((n) => !isNaN(n) && n > 0);
+  return [...new Set(ids)];
+}
 
 type ExportRow = DatasetCase & { datasetName: string };
 
@@ -66,7 +77,12 @@ export function DatasetDetail() {
   const tagCase = useTagCase();
   const labelCase2 = useLabelDatasetCase2();
   const refreshDataset = useRefreshDataset();
+  const addCases = useAddDatasetCases();
   const updateDatasetMutation = useUpdateDataset();
+  const [addCasesOpen, setAddCasesOpen] = useState(false);
+  const [addCasesText, setAddCasesText] = useState('');
+  const [addCasesError, setAddCasesError] = useState<string | null>(null);
+  const [addCasesResult, setAddCasesResult] = useState<{ added: number; skipped: number } | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('labels');
   const [showNewRunModal, setShowNewRunModal] = useState(false);
@@ -147,6 +163,39 @@ export function DatasetDetail() {
     deleteDataset.mutate(datasetId, {
       onSuccess: () => navigate('/dataset'),
     });
+  };
+
+  const handleAddCasesSubmit = () => {
+    setAddCasesError(null);
+    setAddCasesResult(null);
+    const ids = parseCaseIds(addCasesText);
+    if (ids.length === 0) {
+      setAddCasesError('Enter at least one valid case ID');
+      return;
+    }
+    if (ids.length > 500) {
+      setAddCasesError('Maximum 500 case IDs per request');
+      return;
+    }
+    addCases.mutate(
+      { datasetId, caseIds: ids },
+      {
+        onSuccess: (data) => {
+          setAddCasesResult({ added: data.added, skipped: data.skipped });
+          setAddCasesText('');
+        },
+        onError: (err) => {
+          setAddCasesError(err instanceof Error ? err.message : 'Failed to add cases');
+        },
+      },
+    );
+  };
+
+  const closeAddCases = () => {
+    setAddCasesOpen(false);
+    setAddCasesText('');
+    setAddCasesError(null);
+    setAddCasesResult(null);
   };
 
   const handleExport = () => {
@@ -246,6 +295,13 @@ export function DatasetDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setAddCasesOpen(true)}
+            >
+              <FilePlus className="h-4 w-4 mr-2" />
+              Add cases
+            </Button>
             <Button
               variant="outline"
               onClick={() => refreshDataset.mutate(datasetId)}
@@ -386,6 +442,45 @@ export function DatasetDetail() {
         onOpenChange={setShowNewRunModal}
         datasetId={datasetId}
       />
+
+      <Dialog open={addCasesOpen} onOpenChange={(open) => { if (!open) closeAddCases(); else setAddCasesOpen(true); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add cases</DialogTitle>
+            <DialogDescription>
+              Paste case IDs separated by commas, spaces, or new lines. Context will be fetched in the background. Duplicates are skipped.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2 space-y-2">
+            <textarea
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono min-h-[140px] resize-y outline-none focus:ring-2 focus:ring-blue-400"
+              value={addCasesText}
+              onChange={(e) => { setAddCasesText(e.target.value); setAddCasesError(null); setAddCasesResult(null); }}
+              placeholder="34075, 34076&#10;34077"
+              autoFocus
+            />
+            {addCasesError && <p className="text-sm text-red-600">{addCasesError}</p>}
+            {addCasesResult && (
+              <p className="text-sm text-green-700">
+                Added {addCasesResult.added} case{addCasesResult.added === 1 ? '' : 's'}.
+                {addCasesResult.skipped > 0 && ` Skipped ${addCasesResult.skipped} duplicate${addCasesResult.skipped === 1 ? '' : 's'}.`}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAddCases}>
+              {addCasesResult ? 'Close' : 'Cancel'}
+            </Button>
+            <Button
+              onClick={handleAddCasesSubmit}
+              disabled={addCases.isPending || addCasesText.trim().length === 0}
+            >
+              {addCases.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deleteConfirmOpen} onOpenChange={(open) => { setDeleteConfirmOpen(open); if (!open) setDatasetDeleteText(''); }}>
         <DialogContent>

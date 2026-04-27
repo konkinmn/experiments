@@ -76,6 +76,18 @@ export function useRefreshDataset() {
   });
 }
 
+export function useAddDatasetCases() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ datasetId, caseIds }: { datasetId: number; caseIds: number[] }) =>
+      api.addDatasetCases(datasetId, caseIds),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['dataset', variables.datasetId] });
+      queryClient.invalidateQueries({ queryKey: ['datasets'] });
+    },
+  });
+}
+
 export function useLabelDatasetCase() {
   const queryClient = useQueryClient();
   return useMutation({

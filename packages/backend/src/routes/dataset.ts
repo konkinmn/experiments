@@ -4,6 +4,7 @@ import { runCustomSql } from '../services/dataset-segments.js';
 import { runDisputePipeline, fetchCaseContext } from '../services/dispute-pipeline.js';
 import {
   insertDatasetWithCases,
+  insertDatasetCases,
   listDatasets,
   getDataset,
   updateDataset,
@@ -372,6 +373,80 @@ export async function datasetRoutes(app: FastifyInstance) {
       .catch(() => updateDatasetStatus(datasetId, 'ready').catch(() => {}));
 
     return reply.send({ success: true, refreshing: cases.length });
+  });
+
+  // POST /:id/cases — Add cases to an existing dataset
+  app.post<{ Params: { id: string } }>('/:id/cases', async (request, reply) => {
+    const datasetId = parseInt(request.params.id, 10);
+    if (isNaN(datasetId)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+
+    const dataset = await getDataset(datasetId);
+    if (!dataset) {
+      return reply.status(404).send({ error: 'Dataset not found' });
+    }
+
+    const AddCasesSchema = z.object({
+      caseIds: z.array(z.union([z.number(), z.string()])).min(1).max(500),
+    });
+
+    try {
+      const body = AddCasesSchema.parse(request.body);
+      let caseIds: number[];
+      try {
+        caseIds = body.caseIds.map((id) => {
+          const n = Number(id);
+          if (!Number.isInteger(n) || n <= 0) {
+            throw new Error(`Invalid case ID: ${id}`);
+          }
+          return n;
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return reply.status(400).send({ error: message });
+      }
+      caseIds = [...new Set(caseIds)];
+
+      const newCases = await insertDatasetCases(datasetId, caseIds);
+
+      if (newCases.length === 0) {
+        return reply.send({ added: 0, skipped: caseIds.length, cases: [] });
+      }
+
+      await updateDatasetStatus(datasetId, 'loading');
+
+      const tasks = newCases.map((dc) => async () => {
+        try {
+          const exists = await datasetCaseExists(dc.id);
+          if (!exists) return;
+          const context = await fetchCaseContext(dc.case_id);
+          await updateDatasetCaseContext(dc.id, context);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          app.log.error(
+            { caseId: dc.case_id, datasetId, error },
+            'Context fetch failed for added dataset case',
+          );
+          await updateDatasetCaseContextError(dc.id, message).catch(() => {});
+        }
+      });
+
+      runWithConcurrency(tasks, 3)
+        .then(() => updateDatasetStatus(datasetId, 'ready'))
+        .catch(() => updateDatasetStatus(datasetId, 'ready').catch(() => {}));
+
+      return reply.status(201).send({
+        added: newCases.length,
+        skipped: caseIds.length - newCases.length,
+        cases: newCases.map(formatDatasetCase),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      throw error;
+    }
   });
 
   // PATCH /cases/:id/label — Save label, notes, labeled_by

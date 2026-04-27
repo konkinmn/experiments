@@ -99,6 +99,12 @@ export const api = {
       method: 'POST',
     }),
 
+  addDatasetCases: (datasetId: number, caseIds: number[]) =>
+    fetchApi<{ added: number; skipped: number; cases: DatasetCase[] }>(`/api/datasets/${datasetId}/cases`, {
+      method: 'POST',
+      body: JSON.stringify({ caseIds }),
+    }),
+
   labelDatasetCase: (id: number, label: DatasetLabel, notes: string | null, labeledBy: string | null, confidence?: string | null, disagreementReason?: string | null, disagreementNotes?: string | null) =>
     fetchApi<DatasetCase>(`/api/datasets/cases/${id}/label`, {
       method: 'PATCH',
