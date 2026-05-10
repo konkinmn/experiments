@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import { healthRoutes } from './routes/health.js';
 import { timelineAnalyzerRoutes } from './routes/timeline-analyzer.js';
 import { datasetRoutes } from './routes/dataset.js';
+import { caseBrowserRoutes } from './routes/case-browser.js';
 import { closePool } from './services/db.js';
 
 export function buildApp() {
@@ -28,6 +29,7 @@ export function buildApp() {
   app.register(healthRoutes);
   app.register(timelineAnalyzerRoutes, { prefix: '/api/timeline-analyzer' });
   app.register(datasetRoutes, { prefix: '/api/datasets' });
+  app.register(caseBrowserRoutes, { prefix: '/api/case-browser' });
 
   app.addHook('onClose', async () => {
     await closePool();

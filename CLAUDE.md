@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Summary
 
-Monorepo with two experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis) and a **Dataset Builder** (ground-truth eval dataset construction with labeling, pipeline runs, and stratified analytics). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
+Monorepo with three experimental tools for the ANNA Dispute Resolution Agent: a **Timeline Analyzer** (LLM-based case analysis), a **Dataset Builder** (ground-truth eval dataset construction with labeling, pipeline runs, and stratified analytics), and a **Case Browser** (drill-down investigation surface — filter cases, open one, inspect every dialogue/message/comment/assessment/artifact, JSON export). The system automates dispute case triage — determining whether a case can be safely credited or needs human review.
 
 ## Commands
 
@@ -62,6 +62,7 @@ cp packages/backend/.env.example packages/backend/.env  # fill in values
   - `health.ts` — `GET /health`
   - `timeline-analyzer.ts` — `/api/timeline-analyzer` (prompts, start, status polling, cases)
   - `dataset.ts` — `/api/datasets` (CRUD, labeling, runs, run-options, analytics, compare, compose, rename)
+  - `case-browser.ts` — `/api/case-browser` (BQ-only): `GET /list` paginated cases joined to latest dispute assessment; `GET /:caseId` full bundle (case + assessment + dialogues + messages + comments + artifacts + events) — dialogues windowed by alias in `[case_created - 30d, case_created + 7d]`; messages from `verified_tables.assistance_processed_message` (~6h export lag, surfaced via `dataFreshness.bqMaxTimestamp` + drawer banner); `GET /:caseId/export` same with attachment header; `POST /bulk-export` NDJSON stream (≤500 caseIds, 4 concurrent workers via `reply.hijack()`)
 - `src/services/` — Core business logic:
   - `dispute-pipeline.ts` — 5-layer pipeline (signals → hard gates → planner → executor → verifier) + `fetchCaseContext()` for dataset context-only fetching. Exports `DEFAULT_PIPELINE_CONFIG` with all configurable defaults (hard gates, rubric weights, scoring rules).
   - `case-api.ts` — External API client (case details, artifacts, actions, dialogues)
@@ -76,10 +77,11 @@ cp packages/backend/.env.example packages/backend/.env  # fill in values
 
 ### Frontend (`packages/frontend`) — React 18, Vite 6, Tailwind CSS
 
-- `src/pages/` — Three pages: `TimelineAnalyzer.tsx`, `DatasetBuilder.tsx`, `DatasetDetail.tsx`
-- `src/components/` — UI components organized by feature (`timeline-analyzer/`, `dataset-builder/`, `charts/`, `ui/`, `layout/`)
-- `src/hooks/` — `useTimelineAnalyzer.ts`, `useDatasetBuilder.ts` (React Query hooks), `useCaseFilters.ts` (filter/sort state)
-- `src/types/` — `timeline-analyzer.ts`, `dataset-builder.ts` (all pipeline + dataset types consolidated here)
+- `src/pages/` — Four pages: `TimelineAnalyzer.tsx`, `DatasetBuilder.tsx`, `DatasetDetail.tsx`, `CaseBrowser.tsx`
+- `src/components/` — UI components organized by feature (`timeline-analyzer/`, `dataset-builder/`, `case-browser/`, `charts/`, `ui/`, `layout/`)
+- `src/components/case-browser/` — Filters, Table, manual Tailwind `CaseDetailDrawer` (max-w-5xl, Esc/overlay close, lag banner when case.createdAt > bqMaxTimestamp), `TabNav` + 6 tab components (Overview / Dialogues / Messages / Comments / Artifacts / Timeline), `MessageBubble` (chat-style: customer right / operator left / bot italic-center)
+- `src/hooks/` — `useTimelineAnalyzer.ts`, `useDatasetBuilder.ts` (React Query hooks), `useCaseFilters.ts` (filter/sort state), `useCaseBrowser.ts` (list, detail, bulk-export mutation)
+- `src/types/` — `timeline-analyzer.ts`, `dataset-builder.ts`, `case-browser.ts` (all pipeline + dataset + case-browser types)
 - `src/lib/` — API client, xlsx export, cn helper
 - UI primitives: Radix UI (dialog, slot) + class-variance-authority + tailwind-merge. Icons: lucide-react.
 - Charts: visx (axis, shape, scale, tooltip, responsive)

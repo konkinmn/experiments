@@ -14,6 +14,10 @@ import type {
   DatasetRunCase,
   DatasetAnalytics,
   RunComparisonResult,
+  CaseBrowserListParams,
+  CaseBrowserListResponse,
+  CaseBrowserIdsResponse,
+  CaseBundle,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -187,4 +191,62 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ tags }),
     }),
+
+  // Case Browser API
+  getCaseBrowserList: (params: CaseBrowserListParams) => {
+    const searchParams = new URLSearchParams();
+    searchParams.set('startDate', params.startDate);
+    searchParams.set('endDate', params.endDate);
+    if (params.page) searchParams.set('page', String(params.page));
+    if (params.pageSize) searchParams.set('pageSize', String(params.pageSize));
+    if (params.search) searchParams.set('search', params.search);
+    if (params.issueType) searchParams.set('issueType', params.issueType);
+    if (params.businessArea) searchParams.set('businessArea', params.businessArea);
+    if (params.status) searchParams.set('status', params.status);
+    if (params.outcome) searchParams.set('outcome', params.outcome);
+    if (params.owner) searchParams.set('owner', params.owner);
+    if (params.hasAssessment) searchParams.set('hasAssessment', params.hasAssessment);
+    if (params.decision) searchParams.set('decision', params.decision);
+    if (params.riskLevel) searchParams.set('riskLevel', params.riskLevel);
+    if (params.trigger) searchParams.set('trigger', params.trigger);
+    if (params.sortBy) searchParams.set('sortBy', params.sortBy);
+    if (params.sortOrder) searchParams.set('sortOrder', params.sortOrder);
+    return fetchApi<CaseBrowserListResponse>(`/api/case-browser/list?${searchParams}`);
+  },
+
+  getCaseBrowserDetail: (caseId: string) =>
+    fetchApi<{ data: CaseBundle }>(`/api/case-browser/${encodeURIComponent(caseId)}`),
+
+  getCaseBrowserIds: (params: CaseBrowserListParams) => {
+    const searchParams = new URLSearchParams();
+    searchParams.set('startDate', params.startDate);
+    searchParams.set('endDate', params.endDate);
+    if (params.search) searchParams.set('search', params.search);
+    if (params.issueType) searchParams.set('issueType', params.issueType);
+    if (params.businessArea) searchParams.set('businessArea', params.businessArea);
+    if (params.status) searchParams.set('status', params.status);
+    if (params.outcome) searchParams.set('outcome', params.outcome);
+    if (params.owner) searchParams.set('owner', params.owner);
+    if (params.hasAssessment) searchParams.set('hasAssessment', params.hasAssessment);
+    if (params.decision) searchParams.set('decision', params.decision);
+    if (params.riskLevel) searchParams.set('riskLevel', params.riskLevel);
+    if (params.trigger) searchParams.set('trigger', params.trigger);
+    return fetchApi<CaseBrowserIdsResponse>(`/api/case-browser/ids?${searchParams}`);
+  },
+
+  exportCaseBrowserSingle: async (caseId: string): Promise<Blob> => {
+    const response = await fetch(`${API_BASE}/api/case-browser/${encodeURIComponent(caseId)}/export`);
+    if (!response.ok) throw new Error(`Export failed: ${response.status}`);
+    return response.blob();
+  },
+
+  bulkExportCaseBrowser: async (caseIds: number[]): Promise<Blob> => {
+    const response = await fetch(`${API_BASE}/api/case-browser/bulk-export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseIds }),
+    });
+    if (!response.ok) throw new Error(`Bulk export failed: ${response.status}`);
+    return response.blob();
+  },
 };
