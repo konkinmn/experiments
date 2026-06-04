@@ -29,7 +29,9 @@ export interface LLMResponse {
   content: string;
 }
 
-const LLM_API_BASE_URL = process.env.LLM_API_BASE_URL || '';
+// Prefer LLM_API_BASE_URL; fall back to ANNA_LLM_PROXY_URL (the anna-case bridge convention
+// used by this repo's .env) so the standalone LLM client works without duplicate config.
+const LLM_API_BASE_URL = process.env.LLM_API_BASE_URL || process.env.ANNA_LLM_PROXY_URL || '';
 const LLM_PROVIDER = process.env.LLM_PROVIDER || 'ANTHROPIC';
 const LLM_MODEL = process.env.LLM_MODEL || 'claude-sonnet-4-5@20250929';
 
@@ -51,7 +53,7 @@ function deriveProvider(model: string): string {
 
 export async function analyzeWithLLM(
   messages: Message[],
-  options?: { model?: string },
+  options?: { model?: string; maxTokens?: number },
 ): Promise<LLMResponse> {
   if (!LLM_API_BASE_URL) {
     throw new Error('LLM_API_BASE_URL is not configured');
@@ -59,6 +61,7 @@ export async function analyzeWithLLM(
 
   const model = options?.model || LLM_MODEL;
   const provider = options?.model ? deriveProvider(options.model) : LLM_PROVIDER;
+  const maxTokens = options?.maxTokens ?? 4096;
 
   const response = await fetch(`${LLM_API_BASE_URL}/api/chat`, {
     method: 'POST',
@@ -72,7 +75,7 @@ export async function analyzeWithLLM(
       model,
       temperature: 0,
       seed: 777,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
     }),
     signal: AbortSignal.timeout(LLM_FETCH_TIMEOUT_MS),
   });

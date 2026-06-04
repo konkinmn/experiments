@@ -4,6 +4,7 @@ import { TimelineAnalyzer } from '@/pages/TimelineAnalyzer';
 import { DatasetBuilder } from '@/pages/DatasetBuilder';
 import { DatasetDetail } from '@/pages/DatasetDetail';
 import { CaseBrowser } from '@/pages/CaseBrowser';
+import { QueueAnalyser } from '@/pages/QueueAnalyser';
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
         <Route path="/dataset" element={<DatasetBuilder />} />
         <Route path="/dataset/:id" element={<DatasetDetail />} />
         <Route path="/case-browser" element={<CaseBrowser />} />
+        <Route path="/queue-analyser" element={<QueueAnalyser />} />
       </Routes>
     </div>
   );

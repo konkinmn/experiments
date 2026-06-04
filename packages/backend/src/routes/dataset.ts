@@ -38,6 +38,7 @@ import {
   renameDatasetRun,
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
+import { runWithConcurrency } from '../utils/concurrency.js';
 import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig, CaseContext, CaseSignalsRaw, CaseAction, DialogueMessage } from '../types/dispute-pipeline.js';
 import { loadAnnaCasePrompt } from '../services/anna-case-bridge.js';
 import { computeFullAnalytics, computeRunComparison } from '../services/dataset-analytics.js';
@@ -106,28 +107,6 @@ function formatDatasetCase(row: DatasetCaseRow) {
     autoTags: row.auto_tags ?? {},
     createdAt: row.created_at,
   };
-}
-
-/**
- * Run promises with a concurrency limit.
- */
-async function runWithConcurrency<T>(
-  tasks: (() => Promise<T>)[],
-  limit: number,
-): Promise<T[]> {
-  const results: T[] = [];
-  let index = 0;
-
-  async function worker() {
-    while (index < tasks.length) {
-      const i = index++;
-      results[i] = await tasks[i]!();
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => worker());
-  await Promise.all(workers);
-  return results;
 }
 
 export async function datasetRoutes(app: FastifyInstance) {
