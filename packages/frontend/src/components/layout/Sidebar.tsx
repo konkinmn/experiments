@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { FlaskConical, Activity, Database, Search } from "lucide-react";
+import { FlaskConical, Activity, Database, Search, ListChecks } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Sidebar() {
@@ -7,6 +7,7 @@ export function Sidebar() {
   const isTimelineAnalyzerActive = location.pathname === '/timeline-analyzer';
   const isDatasetBuilderActive = location.pathname.startsWith('/dataset');
   const isCaseBrowserActive = location.pathname.startsWith('/case-browser');
+  const isQueueAnalyserActive = location.pathname.startsWith('/queue-analyser');
 
   return (
     <aside className="w-64 border-r border-gray-200 bg-white flex flex-col h-full">
@@ -65,6 +66,20 @@ export function Sidebar() {
               <Search className="h-3.5 w-3.5 text-blue-600" />
             </div>
             <span>Case Browser</span>
+          </Link>
+          <Link
+            to="/queue-analyser"
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
+              isQueueAnalyserActive
+                ? "bg-blue-50 text-blue-600 font-medium"
+                : "text-gray-600 hover:bg-gray-100"
+            )}
+          >
+            <div className="h-6 w-6 rounded-full bg-blue-100 flex items-center justify-center">
+              <ListChecks className="h-3.5 w-3.5 text-blue-600" />
+            </div>
+            <span>Queue Analyser</span>
           </Link>
         </nav>
       </div>

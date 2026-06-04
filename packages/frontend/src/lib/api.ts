@@ -18,6 +18,11 @@ import type {
   CaseBrowserListResponse,
   CaseBrowserIdsResponse,
   CaseBundle,
+  QueueGroup,
+  QueueRun,
+  QueueRunsResponse,
+  QueueTask,
+  QueueTaskFilters,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
@@ -248,5 +253,39 @@ export const api = {
     });
     if (!response.ok) throw new Error(`Bulk export failed: ${response.status}`);
     return response.blob();
+  },
+
+  // Queue Analyser API
+  getQueueGroups: () => fetchApi<{ data: QueueGroup[] }>('/api/queue-analyser/groups'),
+
+  runQueueAnalysis: (groupId: string, model?: string) =>
+    fetchApi<QueueRun>('/api/queue-analyser/run', {
+      method: 'POST',
+      body: JSON.stringify({ groupId, ...(model ? { model } : {}) }),
+    }),
+
+  getQueueRuns: (page = 1, pageSize = 20) =>
+    fetchApi<QueueRunsResponse>(`/api/queue-analyser/runs?page=${page}&pageSize=${pageSize}`),
+
+  getQueueRun: (runId: number) =>
+    fetchApi<QueueRun>(`/api/queue-analyser/runs/${runId}`),
+
+  deleteQueueRun: (runId: number) =>
+    fetchApi<{ success: boolean }>(`/api/queue-analyser/runs/${runId}`, {
+      method: 'DELETE',
+    }),
+
+  getQueueRunTasks: (runId: number, filters?: QueueTaskFilters) => {
+    const searchParams = new URLSearchParams();
+    if (filters?.urgency) searchParams.set('urgency', filters.urgency);
+    if (filters?.quickWin !== undefined) searchParams.set('quickWin', String(filters.quickWin));
+    if (filters?.status) searchParams.set('status', filters.status);
+    if (filters?.kind) searchParams.set('kind', filters.kind);
+    if (filters?.wrongQueue !== undefined) searchParams.set('wrongQueue', String(filters.wrongQueue));
+    if (filters?.groupName) searchParams.set('groupName', filters.groupName);
+    const qs = searchParams.toString();
+    return fetchApi<{ data: QueueTask[] }>(
+      `/api/queue-analyser/runs/${runId}/tasks${qs ? `?${qs}` : ''}`,
+    );
   },
 };

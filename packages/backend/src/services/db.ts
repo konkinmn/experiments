@@ -424,6 +424,138 @@ async function applyMigrations(): Promise<void> {
       await pool.query(`ALTER TABLE dispute_pipeline_runs ADD COLUMN IF NOT EXISTS prompt_md5 TEXT`);
     }
 
+    // Migration 011: queue analyser runs + tasks
+    const { rows: queueRunsTable } = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'queue_analyser_runs'`,
+    );
+    if (queueRunsTable.length === 0) {
+      await pool.query(`
+        CREATE TABLE queue_analyser_runs (
+          id SERIAL PRIMARY KEY,
+          group_id TEXT NOT NULL,
+          group_name TEXT NOT NULL,
+          model TEXT,
+          prompt_md5 TEXT,
+          status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'ready', 'error')),
+          n_tasks INTEGER NOT NULL DEFAULT 0,
+          n_auto_close INTEGER NOT NULL DEFAULT 0,
+          n_reroute INTEGER NOT NULL DEFAULT 0,
+          n_needs_review INTEGER NOT NULL DEFAULT 0,
+          n_real_work INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          completed_at TIMESTAMPTZ
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_runs_group_id ON queue_analyser_runs(group_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_runs_created_at ON queue_analyser_runs(created_at)`);
+    }
+
+    const { rows: queueTasksTable } = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'queue_analyser_tasks'`,
+    );
+    if (queueTasksTable.length === 0) {
+      await pool.query(`
+        CREATE TABLE queue_analyser_tasks (
+          id SERIAL PRIMARY KEY,
+          run_id INTEGER NOT NULL REFERENCES queue_analyser_runs(id) ON DELETE CASCADE,
+          task_id BIGINT NOT NULL,
+          ws_link TEXT,
+          alias TEXT,
+          title TEXT,
+          task_type TEXT,
+          age_days INTEGER,
+          created_by TEXT,
+          taken_by TEXT,
+          rb_jira_sync BOOLEAN,
+          n_cases INTEGER,
+          case_statuses TEXT,
+          bucket TEXT NOT NULL,
+          rule_fired TEXT,
+          sub_bucket TEXT,
+          reason TEXT,
+          suggested_action TEXT,
+          confidence REAL,
+          classify_error TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_run_id ON queue_analyser_tasks(run_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_bucket ON queue_analyser_tasks(bucket)`);
+    }
+
+    // Migration 012: queue analyser v2 — enrichment facts + work-group fields
+    const { rows: qaV2Col } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'queue_analyser_tasks' AND column_name = 'balance'`,
+    );
+    if (qaV2Col.length === 0) {
+      await pool.query(`
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS groups JSONB;
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS summary TEXT;
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_high_priority INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS total_residual_balance NUMERIC NOT NULL DEFAULT 0;
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_safe_close INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS n_active INTEGER;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS n_done INTEGER;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS balance NUMERIC;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS currency TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS account_statuses TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS account_closed BOOLEAN;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS company_status TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS date_ceased_on DATE;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS days_since_cessation INTEGER;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS company_number TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS company_title TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS n_alias_open INTEGER;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS n_alias_closed INTEGER;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS group_name TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS disposition TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS the_work TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS priority TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS rationale TEXT;
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_priority ON queue_analyser_tasks(priority)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_disposition ON queue_analyser_tasks(disposition)`);
+    }
+
+    // Migration 013: v2 stopped writing the legacy `bucket` column — drop its NOT NULL.
+    const { rows: bucketNotNull } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'queue_analyser_tasks' AND column_name = 'bucket' AND is_nullable = 'NO'`,
+    );
+    if (bucketNotNull.length > 0) {
+      await pool.query(`ALTER TABLE queue_analyser_tasks ALTER COLUMN bucket DROP NOT NULL`);
+    }
+
+    // Migration 014: queue analyser v3 — KB-grounded catalog fields + two-axis triage
+    const { rows: qaV3Col } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'queue_analyser_tasks' AND column_name = 'kind'`,
+    );
+    if (qaV3Col.length === 0) {
+      await pool.query(`
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS kind TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS urgency TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS quick_win BOOLEAN;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS status TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS sla_days INTEGER;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS sla_status TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS wrong_queue BOOLEAN;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS suggested_queue TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS destination TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS kb_ref TEXT;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS is_new_kind BOOLEAN;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS has_attachments BOOLEAN;
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_quick_wins INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_overdue INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_wrong_queue INTEGER NOT NULL DEFAULT 0;
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_kind ON queue_analyser_tasks(kind)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_urgency ON queue_analyser_tasks(urgency)`);
+    }
+
     _migrationsApplied = true;
   } catch (e) {
     _migrationsPromise = null;
@@ -1442,6 +1574,283 @@ export async function composeDatasets(
   } finally {
     client.release();
   }
+}
+
+// --- Queue Analyser ---
+
+export interface QueueRunRow {
+  id: number;
+  group_id: string;
+  group_name: string;
+  model: string | null;
+  prompt_md5: string | null;
+  status: 'running' | 'ready' | 'error';
+  n_tasks: number;
+  groups: WorkGroupSummary[] | null;
+  summary: string | null;
+  n_high_priority: number;
+  total_residual_balance: number | null;
+  n_safe_close: number;
+  n_quick_wins: number;
+  n_overdue: number;
+  n_wrong_queue: number;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface WorkGroupSummary {
+  name: string;
+  kind: string;
+  is_new_kind: boolean;
+  disposition: string;
+  urgency: string;
+  quick_win: boolean;
+  sla_days: number | null;
+  the_work: string;
+  destination: string | null;
+  kb_ref: string | null;
+  count: number;
+  total_balance: number;
+  member_task_ids: number[];
+}
+
+export interface QueueTaskInsert {
+  task_id: number;
+  ws_link: string | null;
+  alias: string | null;
+  title: string | null;
+  task_type: string | null;
+  age_days: number | null;
+  created_by: string | null;
+  taken_by: string | null;
+  rb_jira_sync: boolean | null;
+  n_cases: number | null;
+  n_active: number | null;
+  n_done: number | null;
+  case_statuses: string | null;
+  balance: number | null;
+  currency: string | null;
+  account_statuses: string | null;
+  account_closed: boolean | null;
+  company_status: string | null;
+  date_ceased_on: string | null;
+  days_since_cessation: number | null;
+  company_number: string | null;
+  company_title: string | null;
+  n_alias_open: number | null;
+  n_alias_closed: number | null;
+  group_name: string | null;
+  disposition: string | null;
+  the_work: string | null;
+  priority: string | null;
+  rationale: string | null;
+  // v3
+  kind: string | null;
+  urgency: string | null;
+  quick_win: boolean | null;
+  status: string | null;
+  sla_days: number | null;
+  sla_status: string | null;
+  wrong_queue: boolean | null;
+  suggested_queue: string | null;
+  destination: string | null;
+  kb_ref: string | null;
+  is_new_kind: boolean | null;
+  has_attachments: boolean | null;
+}
+
+export interface QueueTaskRowDb extends QueueTaskInsert {
+  id: number;
+  run_id: number;
+  created_at: string;
+}
+
+export async function insertQueueRun(
+  groupId: string,
+  groupName: string,
+  model: string | null,
+): Promise<QueueRunRow> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<QueueRunRow>(
+    `INSERT INTO queue_analyser_runs (group_id, group_name, model, status)
+     VALUES ($1, $2, $3, 'running')
+     RETURNING *`,
+    [groupId, groupName, model],
+  );
+  if (!rows[0]) throw new Error('Insert did not return a row');
+  return rows[0];
+}
+
+export async function completeQueueRun(
+  runId: number,
+  data: {
+    promptMd5: string | null;
+    nTasks: number;
+    groups: WorkGroupSummary[];
+    summary: string;
+    nHighPriority: number;
+    totalResidualBalance: number;
+    nSafeClose: number;
+    nQuickWins: number;
+    nOverdue: number;
+    nWrongQueue: number;
+  },
+): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE queue_analyser_runs
+     SET status = 'ready', prompt_md5 = $2, n_tasks = $3, groups = $4, summary = $5,
+         n_high_priority = $6, total_residual_balance = $7, n_safe_close = $8,
+         n_quick_wins = $9, n_overdue = $10, n_wrong_queue = $11, completed_at = now()
+     WHERE id = $1`,
+    [
+      runId,
+      data.promptMd5,
+      data.nTasks,
+      JSON.stringify(data.groups),
+      data.summary,
+      data.nHighPriority,
+      data.totalResidualBalance,
+      data.nSafeClose,
+      data.nQuickWins,
+      data.nOverdue,
+      data.nWrongQueue,
+    ],
+  );
+}
+
+export async function failQueueRun(runId: number, error: string): Promise<void> {
+  await ensureMigrations();
+  const pool = getPool();
+  await pool.query(
+    `UPDATE queue_analyser_runs SET status = 'error', error = $2, completed_at = now() WHERE id = $1`,
+    [error, runId],
+  );
+}
+
+const QUEUE_TASK_COLUMNS: (keyof QueueTaskInsert)[] = [
+  'task_id', 'ws_link', 'alias', 'title', 'task_type', 'age_days', 'created_by', 'taken_by',
+  'rb_jira_sync', 'n_cases', 'n_active', 'n_done', 'case_statuses', 'balance', 'currency',
+  'account_statuses', 'account_closed', 'company_status', 'date_ceased_on', 'days_since_cessation',
+  'company_number', 'company_title', 'n_alias_open', 'n_alias_closed', 'group_name', 'disposition',
+  'the_work', 'priority', 'rationale',
+  'kind', 'urgency', 'quick_win', 'status', 'sla_days', 'sla_status', 'wrong_queue',
+  'suggested_queue', 'destination', 'kb_ref', 'is_new_kind', 'has_attachments',
+];
+
+export async function bulkInsertQueueTasks(runId: number, tasks: QueueTaskInsert[]): Promise<void> {
+  if (tasks.length === 0) return;
+  await ensureMigrations();
+  const pool = getPool();
+  const colSql = ['run_id', ...QUEUE_TASK_COLUMNS].join(', ');
+  const BATCH_SIZE = 200;
+  for (let start = 0; start < tasks.length; start += BATCH_SIZE) {
+    const batch = tasks.slice(start, start + BATCH_SIZE);
+    const values: unknown[] = [];
+    const placeholders: string[] = [];
+    let idx = 1;
+    for (const t of batch) {
+      const ph: string[] = [];
+      ph.push(`$${idx++}`);
+      values.push(runId);
+      for (const col of QUEUE_TASK_COLUMNS) {
+        ph.push(`$${idx++}`);
+        values.push(t[col] ?? null);
+      }
+      placeholders.push(`(${ph.join(', ')})`);
+    }
+    await pool.query(
+      `INSERT INTO queue_analyser_tasks (${colSql}) VALUES ${placeholders.join(', ')}`,
+      values,
+    );
+  }
+}
+
+export async function getQueueRuns(limit: number, offset: number): Promise<QueueRunRow[]> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<QueueRunRow>(
+    `SELECT * FROM queue_analyser_runs ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+    [limit, offset],
+  );
+  return rows;
+}
+
+export async function getQueueRunCount(): Promise<number> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM queue_analyser_runs`);
+  return parseInt(rows[0]?.count ?? '0', 10);
+}
+
+export async function deleteQueueRun(runId: number): Promise<number> {
+  await ensureMigrations();
+  const pool = getPool();
+  // queue_analyser_tasks cascade-deletes via FK.
+  const result = await pool.query(`DELETE FROM queue_analyser_runs WHERE id = $1`, [runId]);
+  return result.rowCount ?? 0;
+}
+
+export async function getQueueRun(runId: number): Promise<QueueRunRow | null> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rows } = await pool.query<QueueRunRow>(`SELECT * FROM queue_analyser_runs WHERE id = $1`, [runId]);
+  return rows[0] ?? null;
+}
+
+export async function getQueueRunTasks(
+  runId: number,
+  filters?: {
+    urgency?: string;
+    quickWin?: boolean;
+    status?: string;
+    kind?: string;
+    wrongQueue?: boolean;
+    groupName?: string;
+  },
+): Promise<QueueTaskRowDb[]> {
+  await ensureMigrations();
+  const pool = getPool();
+  const conditions = ['run_id = $1'];
+  const values: unknown[] = [runId];
+  let idx = 2;
+  if (filters?.urgency) {
+    conditions.push(`urgency = $${idx++}`);
+    values.push(filters.urgency);
+  }
+  if (filters?.quickWin !== undefined) {
+    conditions.push(`quick_win = $${idx++}`);
+    values.push(filters.quickWin);
+  }
+  if (filters?.status) {
+    conditions.push(`status = $${idx++}`);
+    values.push(filters.status);
+  }
+  if (filters?.kind) {
+    conditions.push(`kind = $${idx++}`);
+    values.push(filters.kind);
+  }
+  if (filters?.wrongQueue !== undefined) {
+    conditions.push(`wrong_queue = $${idx++}`);
+    values.push(filters.wrongQueue);
+  }
+  if (filters?.groupName) {
+    conditions.push(`group_name = $${idx++}`);
+    values.push(filters.groupName);
+  }
+  // Sort by urgency (high → low), then overdue first, then balance desc, then age desc.
+  const { rows } = await pool.query<QueueTaskRowDb>(
+    `SELECT * FROM queue_analyser_tasks
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
+              CASE WHEN sla_status = 'overdue' THEN 0 ELSE 1 END,
+              COALESCE(balance, 0) DESC, age_days DESC`,
+    values,
+  );
+  return rows;
 }
 
 export async function closePool(): Promise<void> {
