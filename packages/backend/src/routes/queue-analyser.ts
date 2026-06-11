@@ -1,8 +1,26 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { fetchQueueEnriched, buildTaskWsLink, type EnrichedTaskRow } from '../services/queue-analyser-query.js';
-import { analyseQueue, type TaskAssignment } from '../services/queue-classifier.js';
+import { appendFileSync } from 'node:fs';
+
+// TEMP diagnostic: write each run stage to a file so we can see where a run stalls.
+function stageLog(runId: number, msg: string) {
+  try {
+    appendFileSync('/tmp/queue-stage.log', `[${new Date().toISOString()}] run#${runId} ${msg}\n`);
+  } catch {
+    /* best effort */
+  }
+}
+import {
+  fetchQueueEnriched,
+  assembleCaseContext,
+  buildTaskWsLink,
+  buildCaseWsLink,
+  type EnrichedTaskRow,
+} from '../services/queue-analyser-query.js';
+import { fetchLiveCaseContent } from '../services/queue-live-content.js';
+import { fetchOpenAgentTasks, fetchOpenCaseActions, type WsAgentTask } from '../services/case-api.js';
+import { analyseQueue, analyseDisputeQueue, type TaskAssignment } from '../services/queue-classifier.js';
 import {
   insertQueueRun,
   completeQueueRun,
@@ -13,6 +31,7 @@ import {
   getQueueRun,
   deleteQueueRun,
   getQueueRunTasks,
+  failStuckQueueRuns,
   type QueueRunRow,
   type QueueTaskRowDb,
   type QueueTaskInsert,
@@ -30,6 +49,9 @@ const PAYMENTS_GROUPS = [
   { groupId: 'a21f8a8f-d20c-453c-a6bf-31aa09e6bf5f', name: 'Negative Balance', priority: 1 },
   { groupId: '61e0d287-3569-4190-b598-7e657d0c1785', name: 'Retrievals', priority: 1 },
 ] as const;
+
+// Hard cap on a single run; past this the worker is assumed hung and the run is failed.
+const RUN_DEADLINE_MS = 8 * 60_000;
 
 const RunSchema = z.object({
   groupId: z.string().min(1),
@@ -93,7 +115,7 @@ function formatTask(t: QueueTaskRowDb) {
     id: t.id,
     runId: t.run_id,
     taskId: t.task_id,
-    wsLink: t.ws_link,
+    wsLink: buildTaskWsLink(t.alias, t.task_id) ?? t.ws_link,
     alias: t.alias,
     title: t.title,
     taskType: t.task_type,
@@ -131,6 +153,9 @@ function formatTask(t: QueueTaskRowDb) {
     suggestedQueue: t.suggested_queue,
     destination: t.destination,
     kbRef: t.kb_ref,
+    suggestedAction: t.suggested_action,
+    rationale: t.rationale,
+    caseContext: t.case_context,
     createdAt: t.created_at,
   };
 }
@@ -139,7 +164,7 @@ function formatTask(t: QueueTaskRowDb) {
 function toInsert(t: EnrichedTaskRow, a: TaskAssignment | undefined): QueueTaskInsert {
   return {
     task_id: t.task_id,
-    ws_link: buildTaskWsLink(t.alias),
+    ws_link: buildTaskWsLink(t.alias, t.task_id),
     alias: t.alias,
     title: t.title,
     task_type: t.task_type,
@@ -166,7 +191,8 @@ function toInsert(t: EnrichedTaskRow, a: TaskAssignment | undefined): QueueTaskI
     disposition: a?.disposition ?? null,
     the_work: a?.the_work ?? null,
     priority: a?.urgency ?? null,
-    rationale: null,
+    rationale: a?.rationale ?? null,
+    suggested_action: a?.next_step ?? null,
     kind: a?.kind ?? null,
     urgency: a?.urgency ?? null,
     quick_win: a?.quick_win ?? null,
@@ -179,10 +205,18 @@ function toInsert(t: EnrichedTaskRow, a: TaskAssignment | undefined): QueueTaskI
     kb_ref: a?.kb_ref ?? null,
     is_new_kind: a?.is_new_kind ?? null,
     has_attachments: t.has_attachments,
+    case_context: t.case_context ?? null,
   };
 }
 
 export async function queueAnalyserRoutes(app: FastifyInstance) {
+  // Reconcile runs orphaned by a previous restart (their in-process workers are gone).
+  failStuckQueueRuns()
+    .then((n) => {
+      if (n > 0) app.log.warn({ n }, 'queue: reconciled stuck run(s) orphaned by restart');
+    })
+    .catch((err) => app.log.error({ err }, 'queue: failed to reconcile stuck runs'));
+
   // GET /groups — the seeded Payments skill groups (ordered by priority desc)
   app.get('/groups', async () => {
     return {
@@ -212,16 +246,117 @@ export async function queueAnalyserRoutes(app: FastifyInstance) {
     const run = await insertQueueRun(group.groupId, group.name, body.model ?? null);
 
     void (async () => {
-      try {
-        app.log.info({ runId: run.id }, 'queue: enrich start');
-        const enriched = await fetchQueueEnriched(group.groupId);
-        app.log.info({ runId: run.id, n: enriched.length }, 'queue: enrich done, analyse start');
-        const analysis = await analyseQueue(enriched, group.name, body.model);
-        app.log.info({ runId: run.id, groups: analysis.groups.length, llmError: analysis.error }, 'queue: analyse done, persist start');
+      let timedOut = false;
+      let stage = 'fetch-ws';
+      const runPipeline = async () => {
+        // The open-task LIST comes live from the workstation tasks API — the BigQuery
+        // export lags (closed tasks linger, fresh ones missing). A WS failure fails the
+        // run loudly; we never fall back to the stale export.
+        const tws = Date.now();
+        stageLog(run.id, 'WORKER START → fetch-ws');
+        const agentTasks = await fetchOpenAgentTasks(group.groupId);
+        // The Disputes queue's work includes CASE ACTIONS (dispute form/evidence/handover
+        // items) — they queue by SKILL (all under skill:payments today), not by task
+        // group, so they're invisible to the agent-tasks listing. Surface them as
+        // queue items with their case attached directly.
+        const caseActions = group.name === 'Disputes' ? await fetchOpenCaseActions('payments') : [];
+        const actionWs: WsAgentTask[] = caseActions.map((a) => ({
+          id: a.id,
+          alias: a.alias,
+          title: `${a.action_type.replace(/_/g, ' ')} — case action`,
+          description: null,
+          task_type: 'CASE_ACTION',
+          rb_jira_sync: null,
+          created_by: null,
+          taken_by: null,
+          created_at: a.created_at,
+          status: a.status,
+          group_id: group.groupId,
+          attachments: [],
+        }));
+        const actionCaseById = new Map(caseActions.map((a) => [a.id, a.case_id]));
+        const wsTasks = [...agentTasks, ...actionWs];
+        stageLog(
+          run.id,
+          `fetch-ws done (${agentTasks.length} open tasks + ${caseActions.length} case actions, ${Date.now() - tws}ms) → enrich`,
+        );
+
+        // BQ enrichment (balances/company/siblings) and the live WS case content
+        // (activity, cases, events, assessments, messages) are independent — run both
+        // at once. Live-content failures degrade per task; only the WS task list and
+        // the BQ enrich query are fatal.
+        stage = 'enrich';
+        const t0 = Date.now();
+        app.log.info({ runId: run.id, n: wsTasks.length }, 'queue: enrich + live content start');
+        const taskRefs = wsTasks.map((t) => ({
+          task_id: t.id,
+          alias: t.alias,
+          created_at: t.created_at,
+          direct_case_id: actionCaseById.get(t.id) ?? null,
+          is_case_action: actionCaseById.has(t.id),
+        }));
+        const [enriched, live] = await Promise.all([
+          fetchQueueEnriched(wsTasks),
+          fetchLiveCaseContent(taskRefs),
+        ]);
+        stageLog(
+          run.id,
+          `enrich + live-content done (${enriched.length} tasks, ${live.failures.length} fetch failures, ${Date.now() - t0}ms) → merge`,
+        );
+
+        stage = 'case-content';
+        const t1 = Date.now();
+        let nWithContext = 0;
+        for (const t of enriched) {
+          // Live case stats fill what the enrich query no longer computes.
+          const stats = live.caseStats.get(t.task_id);
+          if (stats) {
+            t.n_cases = stats.n_cases;
+            t.n_active = stats.n_active;
+            t.n_done = stats.n_done;
+            t.case_statuses = stats.case_statuses;
+          }
+          t.safe_close_candidate =
+            (t.total_balance ?? 0) <= 0.005 && t.n_active === 0 && t.n_done > 0;
+          t.case_context = assembleCaseContext(live.aggs.get(t.task_id), live.msgs.get(t.task_id));
+          if (t.case_context) nWithContext++;
+        }
+        stageLog(
+          run.id,
+          `case-content merged (${nWithContext} with ctx, ${live.nAttached} via attached dialogues, ${Date.now() - t1}ms) → analyse`,
+        );
+        if (live.failures.length > 0) {
+          stageLog(run.id, `live-content failures: ${live.failures.slice(0, 20).join(', ')}${live.failures.length > 20 ? ' …' : ''}`);
+        }
+        app.log.info(
+          { runId: run.id, n: enriched.length, nWithContext, failures: live.failures.length },
+          'queue: case content done, analyse start',
+        );
+        // Disputes are classified by phase (Timeline Analyzer + case actions), not catalog kinds.
+        stage = 'analyse';
+        const t2 = Date.now();
+        const analysis =
+          group.name === 'Disputes'
+            ? await analyseDisputeQueue(enriched, group.name, live.casesByTask, body.model)
+            : await analyseQueue(enriched, group.name, body.model);
+        // The degrade marker: surface partial live-content coverage on the run itself.
+        if (live.failures.length > 0) {
+          const marker = `context: ${live.failures.length} live fetch(es) failed`;
+          analysis.error = analysis.error ? `${analysis.error} · ${marker}` : marker;
+        }
+        stageLog(run.id, `analyse done (${analysis.groups.length} groups, llmError=${analysis.error ?? 'none'}, ${Date.now() - t2}ms) → persist`);
+        app.log.info({ runId: run.id, groups: analysis.groups.length, llmError: analysis.error, ms: Date.now() - t2 }, 'queue: analyse done, persist start');
+        stage = 'persist';
 
         await bulkInsertQueueTasks(
           run.id,
-          enriched.map((t) => toInsert(t, analysis.byTask.get(t.task_id))),
+          enriched.map((t) => {
+            const row = toInsert(t, analysis.byTask.get(t.task_id));
+            // Case-action items have no agent task to link to — link to their case.
+            const actionCaseId = actionCaseById.get(t.task_id);
+            if (actionCaseId) row.ws_link = buildCaseWsLink(t.alias, actionCaseId);
+            return row;
+          }),
         );
 
         // Roll group member counts + residual balance into the run summary.
@@ -247,6 +382,7 @@ export async function queueAnalyserRoutes(app: FastifyInstance) {
           .filter((t) => t.company_inactive && (t.total_balance ?? 0) > 0.005)
           .reduce((s, t) => s + (t.total_balance ?? 0), 0);
 
+        if (timedOut) return;
         await completeQueueRun(run.id, {
           promptMd5: createHash('md5').update(analysis.promptContent).digest('hex'),
           nTasks: enriched.length,
@@ -261,10 +397,29 @@ export async function queueAnalyserRoutes(app: FastifyInstance) {
           nOverdue: assignments.filter((a) => a.sla_status === 'overdue').length,
           nWrongQueue: assignments.filter((a) => a.wrong_queue).length,
         });
+        stageLog(run.id, 'COMPLETE (persisted, status=ready)');
+      };
+
+      // Hard deadline — a run is fire-and-forget with no cancel, so without this a single
+      // stuck BigQuery query or LLM call would orphan it as "running" forever.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          stageLog(run.id, `DEADLINE FIRED in stage "${stage}"`);
+          reject(new Error(`Run exceeded ${RUN_DEADLINE_MS / 60_000} min — stuck in stage "${stage}" (a BigQuery query or LLM call did not return).`));
+        }, RUN_DEADLINE_MS);
+      });
+
+      try {
+        await Promise.race([runPipeline(), deadline]);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        stageLog(run.id, `ERROR in stage "${stage}": ${message}`);
         app.log.error({ runId: run.id, error }, 'Queue analyser run failed');
         await failQueueRun(run.id, message).catch(() => {});
+      } finally {
+        if (timer) clearTimeout(timer);
       }
     })();
 

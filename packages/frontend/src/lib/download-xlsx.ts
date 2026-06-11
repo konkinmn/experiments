@@ -5,11 +5,7 @@ export interface ColumnDef<T> {
   accessor: (row: T) => string | number | boolean | null | undefined;
 }
 
-export function downloadXlsx<T>(
-  data: T[],
-  columns: ColumnDef<T>[],
-  filename: string,
-) {
+function buildSheet<T>(data: T[], columns: ColumnDef<T>[]): XLSX.WorkSheet {
   const headers = columns.map((col) => col.header);
   const rows = data.map((row) =>
     columns.map((col) => {
@@ -29,8 +25,36 @@ export function downloadXlsx<T>(
     return { wch: Math.min(maxLen + 2, 50) };
   });
 
+  return worksheet;
+}
+
+export function downloadXlsx<T>(
+  data: T[],
+  columns: ColumnDef<T>[],
+  filename: string,
+) {
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
+  XLSX.utils.book_append_sheet(workbook, buildSheet(data, columns), 'Data');
+  XLSX.writeFile(workbook, `${filename}.xlsx`);
+}
+
+/** A named, type-erased sheet for multi-sheet workbooks — create via makeSheet(). */
+export interface SheetDef {
+  name: string;
+  build: () => XLSX.WorkSheet | null;
+}
+
+export function makeSheet<T>(name: string, rows: T[], columns: ColumnDef<T>[]): SheetDef {
+  return { name, build: () => (rows.length > 0 ? buildSheet(rows, columns) : null) };
+}
+
+/** Empty sheets are skipped. Sheet names are capped at Excel's 31-char limit. */
+export function downloadXlsxWorkbook(sheets: SheetDef[], filename: string) {
+  const workbook = XLSX.utils.book_new();
+  for (const sheet of sheets) {
+    const ws = sheet.build();
+    if (ws) XLSX.utils.book_append_sheet(workbook, ws, sheet.name.slice(0, 31));
+  }
   XLSX.writeFile(workbook, `${filename}.xlsx`);
 }
 

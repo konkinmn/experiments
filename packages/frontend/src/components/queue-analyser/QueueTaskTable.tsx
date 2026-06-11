@@ -1,4 +1,5 @@
-import { ExternalLink, Zap } from 'lucide-react';
+import { Fragment, useState } from 'react';
+import { ChevronDown, ChevronRight, ExternalLink, MessageSquare, Zap } from 'lucide-react';
 import {
   Table,
   TableHeader,
@@ -39,7 +40,65 @@ function statusBadge(s: TaskStatus | null) {
   return <Badge variant={map[s]}>{s.replace(/_/g, ' ')}</Badge>;
 }
 
+const SENDER_STYLES: Record<string, string> = {
+  customer: 'bg-blue-100 text-blue-700',
+  operator: 'bg-gray-200 text-gray-700',
+  bot: 'bg-muted text-muted-foreground italic',
+};
+
+/** One chat message row: "YYYY-MM-DD sender: text" with sender-colored badge. */
+function MessageLine({ item }: { item: string }) {
+  const m = item.match(/^(\d{4}-\d{2}-\d{2}) (customer|operator|bot): (.*)$/);
+  if (!m) return <li className="text-foreground/80">{item}</li>;
+  const [, day, sender, text] = m;
+  return (
+    <li className="flex items-baseline gap-2">
+      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{day}</span>
+      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${SENDER_STYLES[sender]}`}>
+        {sender}
+      </span>
+      <span className={sender === 'bot' ? 'italic text-muted-foreground' : 'text-foreground/80'}>{text}</span>
+    </li>
+  );
+}
+
+/** Render the compact case_context block (newline-separated "key=value · …" sections). */
+function CaseContextDetail({ context }: { context: string }) {
+  const sections = context.split('\n').map((line) => {
+    const eq = line.indexOf('=');
+    const label = eq > 0 ? line.slice(0, eq) : '';
+    const value = eq > 0 ? line.slice(eq + 1) : line;
+    return { label, items: value.split(' | ') };
+  });
+  return (
+    <div className="space-y-2 rounded-md bg-muted/50 p-3 text-xs">
+      {sections.map((s, i) => (
+        <div key={i}>
+          {s.label && <span className="font-semibold uppercase text-muted-foreground">{s.label}</span>}
+          <ul className={s.label === 'messages' ? 'mt-1 space-y-1' : 'mt-0.5 space-y-0.5'}>
+            {s.items.map((it, j) =>
+              s.label === 'messages' ? (
+                <MessageLine key={j} item={it} />
+              ) : (
+                <li key={j} className="text-foreground/80">{it}</li>
+              ),
+            )}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function QueueTaskTable({ data, loading }: QueueTaskTableProps) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggle = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -60,6 +119,7 @@ export function QueueTaskTable({ data, loading }: QueueTaskTableProps) {
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8" />
             <TableHead>Task</TableHead>
             <TableHead>Title</TableHead>
             <TableHead className="text-right">Balance</TableHead>
@@ -67,12 +127,27 @@ export function QueueTaskTable({ data, loading }: QueueTaskTableProps) {
             <TableHead>Group</TableHead>
             <TableHead>Urgency</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Next step</TableHead>
+            <TableHead>Reasoning</TableHead>
             <TableHead>Age / SLA</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {data.map((t) => (
-            <TableRow key={t.id} className="align-top">
+            <Fragment key={t.id}>
+            <TableRow className="align-top">
+              <TableCell className="pr-0">
+                {t.caseContext ? (
+                  <button
+                    type="button"
+                    onClick={() => toggle(t.id)}
+                    className="inline-flex items-center text-muted-foreground hover:text-foreground"
+                    title="Show case context"
+                  >
+                    {expanded.has(t.id) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  </button>
+                ) : null}
+              </TableCell>
               <TableCell className="whitespace-nowrap font-mono text-xs">
                 {t.wsLink ? (
                   <a href={t.wsLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
@@ -102,11 +177,41 @@ export function QueueTaskTable({ data, loading }: QueueTaskTableProps) {
               </TableCell>
               <TableCell>{urgencyBadge(t.urgency)}</TableCell>
               <TableCell>{statusBadge(t.status)}</TableCell>
+              <TableCell className="max-w-[16rem] text-xs">
+                {t.suggestedAction ? (
+                  <span className="line-clamp-3 font-medium" title={t.suggestedAction}>
+                    {t.suggestedAction}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+              <TableCell className="max-w-[18rem] text-xs">
+                {t.rationale ? (
+                  <span className="line-clamp-3 text-muted-foreground" title={t.rationale}>
+                    {t.rationale}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
               <TableCell className="whitespace-nowrap text-xs">
                 {t.ageDays != null ? `${t.ageDays}d` : '—'}
                 {t.slaStatus === 'overdue' && <Badge variant="red" className="ml-1">overdue</Badge>}
               </TableCell>
             </TableRow>
+            {t.caseContext && expanded.has(t.id) && (
+              <TableRow>
+                <TableCell />
+                <TableCell colSpan={10}>
+                  <div className="mb-1 flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                    <MessageSquare className="h-3.5 w-3.5" /> Case context
+                  </div>
+                  <CaseContextDetail context={t.caseContext} />
+                </TableCell>
+              </TableRow>
+            )}
+            </Fragment>
           ))}
         </TableBody>
       </Table>

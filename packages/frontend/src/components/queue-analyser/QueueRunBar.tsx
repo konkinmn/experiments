@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Play, Loader2, Trash2, ArrowDown, ArrowUp } from 'lucide-react';
 import { Select } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
@@ -19,6 +20,22 @@ interface QueueRunBarProps {
   onDeleteRun: (runId: number) => void;
   deleting: boolean;
   activeRun: QueueRun | null;
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
+/** Live-ticking elapsed time since `startIso` (updates every second). */
+function ElapsedTimer({ startIso }: { startIso: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="tabular-nums">{formatDuration(now - new Date(startIso).getTime())}</span>;
 }
 
 function shortTime(iso: string): string {
@@ -137,11 +154,18 @@ export function QueueRunBar({
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-3">
           {activeRun.status === 'running' && (
             <span className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Running…
+              <Loader2 className="h-4 w-4 animate-spin" /> Running… <ElapsedTimer startIso={activeRun.createdAt} />
             </span>
           )}
           {activeRun.status === 'error' && (
-            <span className="text-sm text-red-600">Error: {activeRun.error}</span>
+            <span className="text-sm text-red-600">
+              Error: {activeRun.error}
+              {activeRun.completedAt && (
+                <span className="ml-1 text-muted-foreground">
+                  (after {formatDuration(new Date(activeRun.completedAt).getTime() - new Date(activeRun.createdAt).getTime())})
+                </span>
+              )}
+            </span>
           )}
           {activeRun.status === 'ready' && (
             <>
@@ -174,9 +198,14 @@ export function QueueRunBar({
                     : `${Math.abs(delta)} ${delta < 0 ? 'fewer' : 'more'} than run #${previous.id} (${shortTime(previous.createdAt)})`}
                 </span>
               )}
-              {activeRun.model && (
-                <span className="ml-auto text-xs text-muted-foreground">{activeRun.model}</span>
-              )}
+              <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                {activeRun.completedAt && (
+                  <span>
+                    took {formatDuration(new Date(activeRun.completedAt).getTime() - new Date(activeRun.createdAt).getTime())}
+                  </span>
+                )}
+                {activeRun.model && <span>{activeRun.model}</span>}
+              </span>
             </>
           )}
         </div>

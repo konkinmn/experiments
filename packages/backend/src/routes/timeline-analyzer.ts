@@ -9,7 +9,8 @@ import {
   type CaseTimeline,
   type CaseDetails,
 } from "../services/case-api.js";
-import { analyzeWithLLM, type Message } from "../services/llm-api.js";
+import { analyzeWithLLM } from "../services/llm-api.js";
+import { buildPhaseMessages, parseAnalysisJson } from "../services/dispute-phase.js";
 import {
   insertJob,
   updateJob,
@@ -79,51 +80,6 @@ const CasesQuerySchema = z.object({
     ),
 });
 
-/**
- * Extracts the first top-level JSON object from a string that may contain
- * trailing text after the closing brace. Uses brace counting that respects
- * JSON string literals and escape sequences.
- */
-function extractJsonObject(text: string): unknown | null {
-  const start = text.indexOf("{");
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-
-    if (escape) {
-      escape = false;
-      continue;
-    }
-
-    if (ch === "\\" && inString) {
-      escape = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        return JSON.parse(text.substring(start, i + 1));
-      }
-    }
-  }
-
-  return null;
-}
-
 async function processJob(jobId: string, promptId: string, caseIds: number[]) {
   try {
     // Load prompt
@@ -156,62 +112,9 @@ async function processJob(jobId: string, promptId: string, caseIds: number[]) {
             fetchCaseDetails(caseId),
           ]);
 
-        // Build WS link
-        const wsLink = `https://chat-workstation.k1.anna.money/${caseDetails.alias}/tasks/cases?chatWindow=chat&caseId=${caseId}`;
-
-        // Build messages for LLM
-        const messages: Message[] = [];
-
-        // System message with prompt content and case metadata
-        const caseMetadata = JSON.stringify(
-          {
-            ...caseDetails,
-            ws_link: wsLink,
-          },
-          null,
-          2,
-        );
-        messages.push({
-          role: "system",
-          content: `${prompt.content}\n\n## Case metadata:\n\`\`\`json\n${caseMetadata}\n\`\`\``,
-        });
-
-        // User message with timeline
-        const timelineText = JSON.stringify(timeline.timeline, null, 2);
-        messages.push({
-          role: "user",
-          content: `Analyze this case timeline:\n\n${timelineText}`,
-        });
-
-        // Call LLM
+        const messages = buildPhaseMessages(caseDetails, timeline, prompt.content);
         const response = await analyzeWithLLM(messages);
-
-        // Parse response as JSON if possible (three tiers)
-        let analysis: unknown;
-        try {
-          // Tier 1: Extract JSON from markdown code blocks
-          const jsonMatch = response.content.match(
-            /```(?:json)?\s*([\s\S]*?)\s*```/,
-          );
-          if (jsonMatch) {
-            analysis = JSON.parse(jsonMatch[1]);
-          } else {
-            // Tier 2: Try parsing the entire response as JSON
-            analysis = JSON.parse(response.content);
-          }
-        } catch {
-          // Tier 3: Brace-counting extraction for JSON followed by trailing text
-          try {
-            const extracted = extractJsonObject(response.content);
-            if (extracted !== null) {
-              analysis = extracted;
-            } else {
-              analysis = response.content;
-            }
-          } catch {
-            analysis = response.content;
-          }
-        }
+        const analysis = parseAnalysisJson(response.content);
 
         results.push({
           caseId,
