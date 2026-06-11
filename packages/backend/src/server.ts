@@ -1,9 +1,25 @@
 import { config } from 'dotenv';
-import { existsSync } from 'fs';
+import { existsSync, appendFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Keep the process alive on async faults (Node 23 crashes on unhandledRejection by default,
+// which would kill an in-flight queue run and orphan it). Log to console + a file for triage.
+const crashLog = resolve(__dirname, '../crash.log');
+function logFatal(kind: string, err: unknown) {
+  const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+  const line = `\n[${new Date().toISOString()}] ${kind}\n${detail}\n`;
+  console.error(line);
+  try {
+    appendFileSync(crashLog, line);
+  } catch {
+    /* best effort */
+  }
+}
+process.on('unhandledRejection', (reason) => logFatal('unhandledRejection', reason));
+process.on('uncaughtException', (err) => logFatal('uncaughtException', err));
 
 const envPaths = [
   resolve(__dirname, '../.env'),

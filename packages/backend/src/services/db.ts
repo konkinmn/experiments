@@ -551,10 +551,15 @@ async function applyMigrations(): Promise<void> {
         ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_quick_wins INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_overdue INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE queue_analyser_runs ADD COLUMN IF NOT EXISTS n_wrong_queue INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS case_context TEXT;
       `);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_kind ON queue_analyser_tasks(kind)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_queue_analyser_tasks_urgency ON queue_analyser_tasks(urgency)`);
     }
+
+    // Migration 015: case_context — MUST be unconditional (added after v3, so the kind-gated
+    // block above skips it on any DB where v3 already ran). IF NOT EXISTS keeps it idempotent.
+    await pool.query(`ALTER TABLE queue_analyser_tasks ADD COLUMN IF NOT EXISTS case_context TEXT`);
 
     _migrationsApplied = true;
   } catch (e) {
@@ -1645,6 +1650,7 @@ export interface QueueTaskInsert {
   the_work: string | null;
   priority: string | null;
   rationale: string | null;
+  suggested_action: string | null;
   // v3
   kind: string | null;
   urgency: string | null;
@@ -1658,6 +1664,8 @@ export interface QueueTaskInsert {
   kb_ref: string | null;
   is_new_kind: boolean | null;
   has_attachments: boolean | null;
+  // v4 — compact case-content block (comments / messages / assessment / events) for Stage 2
+  case_context: string | null;
 }
 
 export interface QueueTaskRowDb extends QueueTaskInsert {
@@ -1727,8 +1735,26 @@ export async function failQueueRun(runId: number, error: string): Promise<void> 
   const pool = getPool();
   await pool.query(
     `UPDATE queue_analyser_runs SET status = 'error', error = $2, completed_at = now() WHERE id = $1`,
-    [error, runId],
+    [runId, error],
   );
+}
+
+/**
+ * Fail any run still marked 'running'. A run worker is in-process and fire-and-forget, so a
+ * server restart (prod crash, or tsx-watch reload in dev) kills it mid-flight and orphans the
+ * row as 'running' forever. Called once on startup so orphans self-heal instead of spinning.
+ */
+export async function failStuckQueueRuns(): Promise<number> {
+  await ensureMigrations();
+  const pool = getPool();
+  const { rowCount } = await pool.query(
+    `UPDATE queue_analyser_runs
+       SET status = 'error',
+           error = COALESCE(error, 'Interrupted by a server restart while running'),
+           completed_at = now()
+     WHERE status = 'running'`,
+  );
+  return rowCount ?? 0;
 }
 
 const QUEUE_TASK_COLUMNS: (keyof QueueTaskInsert)[] = [
@@ -1736,9 +1762,9 @@ const QUEUE_TASK_COLUMNS: (keyof QueueTaskInsert)[] = [
   'rb_jira_sync', 'n_cases', 'n_active', 'n_done', 'case_statuses', 'balance', 'currency',
   'account_statuses', 'account_closed', 'company_status', 'date_ceased_on', 'days_since_cessation',
   'company_number', 'company_title', 'n_alias_open', 'n_alias_closed', 'group_name', 'disposition',
-  'the_work', 'priority', 'rationale',
+  'the_work', 'priority', 'rationale', 'suggested_action',
   'kind', 'urgency', 'quick_win', 'status', 'sla_days', 'sla_status', 'wrong_queue',
-  'suggested_queue', 'destination', 'kb_ref', 'is_new_kind', 'has_attachments',
+  'suggested_queue', 'destination', 'kb_ref', 'is_new_kind', 'has_attachments', 'case_context',
 ];
 
 export async function bulkInsertQueueTasks(runId: number, tasks: QueueTaskInsert[]): Promise<void> {

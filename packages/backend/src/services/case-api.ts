@@ -41,6 +41,358 @@ const CHAT_BASE_URL = process.env.CHAT_BASE_URL || 'https://chat.k1.anna.money';
 const API_TOKEN = process.env.API_TOKEN || '';
 const FETCH_TIMEOUT_MS = 30_000;
 
+/** One agent task as the live tasks service returns it (GET /api/v3/agent-tasks). */
+export interface WsAgentTask {
+  id: number;
+  alias: string | null;
+  title: string | null;
+  description: string | null;
+  task_type: string | null;
+  rb_jira_sync: boolean | null;
+  created_by: string | null;
+  taken_by: string | null;
+  created_at: string;
+  status: string;
+  group_id: string;
+  attachments: unknown[];
+}
+
+const AGENT_TASKS_PAGE_SIZE = 100;
+
+/**
+ * The authoritative live list of OPEN tasks for a skill group — the BigQuery export
+ * lags (closed tasks linger, fresh tasks missing). THROWS on any failure: a queue run
+ * must fail visibly rather than proceed on a wrong task list.
+ */
+export async function fetchOpenAgentTasks(groupId: string): Promise<WsAgentTask[]> {
+  const tasks: WsAgentTask[] = [];
+  for (let page = 1; ; page++) {
+    const url =
+      `${TASKS_BASE_URL}/api/v3/agent-tasks?group_id=${encodeURIComponent(groupId)}` +
+      `&status=OPEN&page=${page}&page_size=${AGENT_TASKS_PAGE_SIZE}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Tasks API error: agent-tasks page ${page}: ${response.status} ${response.statusText}`);
+    }
+    const body = (await response.json()) as { data?: WsAgentTask[]; error?: Record<string, unknown> };
+    if (body.error && Object.keys(body.error).length > 0) {
+      throw new Error(`Tasks API error: agent-tasks page ${page}: ${JSON.stringify(body.error)}`);
+    }
+    const batch = body.data ?? [];
+    tasks.push(...batch);
+    if (batch.length < AGENT_TASKS_PAGE_SIZE) break;
+  }
+  return tasks;
+}
+
+/** One OPEN case action from the skill queue (the workstation's "Case action" items). */
+export interface WsQueueCaseAction {
+  id: number;
+  action_type: string;
+  status: string;
+  alias: string | null;
+  case_id: number;
+  queue_id: string | null;
+  created_at: string;
+  priority: number | null;
+  activate_at: string | null;
+}
+
+/**
+ * Open case actions queued for a skill (workstation queue, item_type=case_action).
+ * Case actions queue by SKILL (queue_id = "skill:<id>"), not by task group — today they
+ * all land in skill:payments (the service default). THROWS on failure, same policy as
+ * fetchOpenAgentTasks: these are queue items, a wrong list invalidates the run.
+ */
+export async function fetchOpenCaseActions(skillId: string): Promise<WsQueueCaseAction[]> {
+  const items: WsQueueCaseAction[] = [];
+  for (let page = 1; ; page++) {
+    const url =
+      `${TASKS_BASE_URL}/api/workstation/agent-tasks/queue?skill_id=${encodeURIComponent(skillId)}` +
+      `&item_type=case_action&page=${page}&page_size=${AGENT_TASKS_PAGE_SIZE}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Tasks API error: skill queue page ${page}: ${response.status} ${response.statusText}`);
+    }
+    const body = (await response.json()) as {
+      data?: { items?: WsQueueCaseAction[]; total_count?: number };
+      error?: Record<string, unknown>;
+    };
+    if (body.error && Object.keys(body.error).length > 0) {
+      throw new Error(`Tasks API error: skill queue page ${page}: ${JSON.stringify(body.error)}`);
+    }
+    const batch = body.data?.items ?? [];
+    items.push(...batch);
+    if (batch.length < AGENT_TASKS_PAGE_SIZE) break;
+  }
+  return items;
+}
+
+// ---- Queue-analyser live content fetchers -------------------------------------------------
+// All of these DEGRADE on failure (warn + return empty) — a single flaky call must not kill
+// a queue run. The caller records failures and surfaces them on the run. Only
+// fetchOpenAgentTasks above throws (a wrong task list invalidates the whole run).
+
+async function getJson<T>(url: string, label: string): Promise<T | null> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      console.warn(`${label}: ${response.status} ${response.statusText}`);
+      return null;
+    }
+    const body = (await response.json()) as { data?: T; error?: Record<string, unknown> };
+    if (body.error && Object.keys(body.error).length > 0) {
+      console.warn(`${label}: ${JSON.stringify(body.error).slice(0, 200)}`);
+      return null;
+    }
+    return body.data ?? null;
+  } catch (err) {
+    console.warn(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+function day(ts: string | undefined | null): string {
+  return (ts ?? '').slice(0, 10);
+}
+
+export interface TaskActivityNote {
+  day: string;
+  author: string;
+  text: string;
+}
+export interface TaskActivityChange {
+  day: string;
+  status: string | null;
+  group_id: string | null;
+}
+export interface TaskActivity {
+  notes: TaskActivityNote[];
+  history: TaskActivityChange[];
+}
+
+interface ActivityItem {
+  type: string; // COMMENT | HISTORY
+  timestamp?: string;
+  data?: {
+    author?: string;
+    description?: string;
+    changed_by?: string;
+    changes?: Array<{ field?: string; old?: unknown; new?: unknown }>;
+  };
+}
+
+/** Operator notes + status/group history for one agent task, oldest→newest. Null on failure. */
+export async function fetchTaskActivity(taskId: number): Promise<TaskActivity | null> {
+  const data = await getJson<{ items?: ActivityItem[] }>(
+    `${TASKS_BASE_URL}/api/workstation/agent-tasks/${taskId}/activity?limit=100`,
+    `activity:${taskId}`,
+  );
+  if (!data) return null;
+  const notes: TaskActivityNote[] = [];
+  const history: TaskActivityChange[] = [];
+  for (const item of data.items ?? []) {
+    const d = day(item.timestamp);
+    if (item.type === 'COMMENT' && item.data?.description) {
+      notes.push({ day: d, author: item.data.author ?? '?', text: item.data.description });
+    } else if (item.type === 'HISTORY') {
+      const changes = item.data?.changes ?? [];
+      const status = changes.find((c) => c.field === 'status');
+      const group = changes.find((c) => c.field === 'group_id');
+      if (status || group) {
+        history.push({
+          day: d,
+          status: status ? String(status.new ?? '') : null,
+          group_id: group ? String(group.new ?? '') : null,
+        });
+      }
+    }
+  }
+  // Activity arrives newest-first; flip to oldest→newest for the context format.
+  notes.reverse();
+  history.reverse();
+  return { notes, history };
+}
+
+export interface WsCaseArtifact {
+  artifact_type: string; // DIALOGUE | AGENT_TASK | TRANSACTION | CALL | FILE | …
+  artifact_id: string;
+}
+export interface WsCase {
+  id: number;
+  status: string; // IN_PROGRESS | RESOLVED | DISMISSED
+  created_at: string;
+  issue_type_id: string | null;
+  artifacts: WsCaseArtifact[];
+}
+
+/** All cases for an alias, incl. artifacts (task links + attached dialogues). Null on failure. */
+export async function fetchCasesByAlias(alias: string): Promise<WsCase[] | null> {
+  const data = await getJson<{ cases?: WsCase[] }>(
+    `${CASE_API_BASE_URL}/api/workstation/cases?alias=${encodeURIComponent(alias)}`,
+    `cases:${alias}`,
+  );
+  return data ? (data.cases ?? []) : null;
+}
+
+export interface WsCaseEvent {
+  day: string;
+  event_type: string;
+}
+
+/** Most recent events for a case (one page), oldest→newest. Null on failure. */
+export async function fetchCaseEvents(caseId: number, pageSize = 10): Promise<WsCaseEvent[] | null> {
+  const data = await getJson<{ events?: Array<{ event_type?: string; created_at?: string }> }>(
+    `${CASE_API_BASE_URL}/api/workstation/cases/${caseId}/events?page=1&page_size=${pageSize}`,
+    `events:${caseId}`,
+  );
+  if (!data) return null;
+  const events = (data.events ?? [])
+    .filter((e) => e.event_type)
+    .map((e) => ({ day: day(e.created_at), event_type: e.event_type as string }));
+  return events.sort((a, b) => a.day.localeCompare(b.day));
+}
+
+export interface WsDisputeAssessment {
+  day: string;
+  decision: string;
+  risk_level: string;
+  status: string;
+}
+
+/** Dispute assessments for a case, oldest→newest. Null on failure. */
+export async function fetchCaseDisputeAssessments(caseId: number): Promise<WsDisputeAssessment[] | null> {
+  const data = await getJson<{
+    assessments?: Array<{ decision?: string; risk_level?: string; status?: string; created_at?: string }>;
+  }>(
+    `${CASE_API_BASE_URL}/api/workstation/cases/${caseId}/dispute-assessments`,
+    `assessments:${caseId}`,
+  );
+  if (!data) return null;
+  return (data.assessments ?? [])
+    .map((a) => ({
+      day: day(a.created_at),
+      decision: a.decision ?? '?',
+      risk_level: a.risk_level ?? '?',
+      status: a.status ?? '?',
+    }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/** Skill group id → title (for readable history lines). Empty map on failure. */
+export async function fetchGroupTitles(): Promise<Map<string, string>> {
+  const data = await getJson<Array<{ id?: string; title?: string }>>(
+    `${TASKS_BASE_URL}/api/v3/groups`,
+    'groups',
+  );
+  const map = new Map<string, string>();
+  for (const g of data ?? []) {
+    if (g.id && g.title) map.set(String(g.id), g.title);
+  }
+  return map;
+}
+
+export interface WsDialogue {
+  id: number;
+  alias: string;
+  type: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
+/** The alias's most recently updated dialogues (fallback thread discovery). Null on failure. */
+export async function fetchDialoguesByAlias(alias: string, limit = 10): Promise<WsDialogue[] | null> {
+  const base = `${TASKS_BASE_URL}/api/v3/dialogues?alias=${encodeURIComponent(alias)}&page=1&page_size=${limit}`;
+  const data =
+    (await getJson<WsDialogue[]>(`${base}&sort_by=-updated_at`, `dialogues:${alias}`)) ??
+    (await getJson<WsDialogue[]>(`${base}&sort_by=-created_at`, `dialogues:${alias}`));
+  return data;
+}
+
+export interface WsChatMessage {
+  day: string;
+  sender: string; // customer | operator | bot
+  text: string;
+}
+
+const MSG_TEXT_MAX = 150; // parity with the BQ pipeline's SUBSTR
+
+/** Last `n` messages of one dialogue with content, oldest→newest. Null on failure. */
+export async function fetchDialogueTail(
+  dialogueId: number,
+  alias: string,
+  n = 60,
+): Promise<WsChatMessage[] | null> {
+  const ids = await getJson<Array<{ message_id: string }>>(
+    `${TASKS_BASE_URL}/api/v3/messages?dialogue_id=${dialogueId}&tail_per_dialogue=${n}`,
+    `msg-ids:${dialogueId}`,
+  );
+  if (!ids) return null;
+  if (ids.length === 0) return [];
+
+  try {
+    const idParams = ids.map((m) => `id[]=${encodeURIComponent(m.message_id)}`).join('&');
+    const response = await fetch(`${CHAT_BASE_URL}/api/2/user/${alias}/messages?${idParams}`, {
+      headers: {
+        Authorization: `Bearer ${API_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      console.warn(`msg-content:${dialogueId}: ${response.status} ${response.statusText}`);
+      return null;
+    }
+    const body = (await response.json()) as {
+      messages?: Array<{
+        sender?: { name?: string; is_client?: boolean; role?: string };
+        message?: string | null;
+        created_at?: number;
+        timestamp?: string;
+        is_hidden?: boolean;
+      }>;
+    };
+    const out: WsChatMessage[] = [];
+    for (const msg of body.messages ?? []) {
+      if (msg.is_hidden || !msg.message) continue;
+      const roleName = `${msg.sender?.role ?? ''} ${msg.sender?.name ?? ''}`.toLowerCase();
+      const sender = msg.sender?.is_client
+        ? 'customer'
+        : /bot|assistant|llm/.test(roleName)
+          ? 'bot'
+          : 'operator';
+      const ts = msg.timestamp || (msg.created_at ? new Date(msg.created_at).toISOString() : '');
+      out.push({
+        day: day(ts),
+        sender,
+        text: msg.message.replace(/\s+/g, ' ').trim().slice(0, MSG_TEXT_MAX),
+      });
+    }
+    return out.sort((a, b) => a.day.localeCompare(b.day));
+  } catch (err) {
+    console.warn(`msg-content:${dialogueId}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 export async function fetchCaseTimeline(caseId: number): Promise<CaseTimeline> {
   const url = `${CASE_API_BASE_URL}/api/workstation/cases/${caseId}/timeline`;
 

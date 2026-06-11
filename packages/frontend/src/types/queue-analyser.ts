@@ -92,6 +92,9 @@ export interface QueueTask {
   suggestedQueue: string | null;
   destination: string | null;
   kbRef: string | null;
+  suggestedAction: string | null;
+  rationale: string | null;
+  caseContext: string | null;
   createdAt: string;
 }
 
