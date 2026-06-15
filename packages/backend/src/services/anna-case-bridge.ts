@@ -149,7 +149,9 @@ function projectEnrichment(
   return {
     case_actions: actions,
     customer_dialogue_messages: messages,
-    parsed_documents: parsedDocuments ?? [],
+    // anna-case EnrichmentData.parsed_documents expects DocumentLabel objects ({ description, ... }),
+    // not raw strings. file_parse_results are the parsed-document descriptions, so wrap each as one.
+    parsed_documents: (parsedDocuments ?? []).map((d) => ({ description: d })),
     case_actions_count: actions.length,
     customer_messages_count: messages.length,
     files_parsed: parsedDocuments?.length ?? 0,

@@ -45,10 +45,16 @@ function riskBadge(level: RiskLevel | string | undefined | null) {
   return RISK_BADGE[key] ?? { label: String(level), variant: 'amber' as const };
 }
 
-const DECISION_BADGE: Record<string, { label: string; variant: 'green' | 'amber' | 'red' }> = {
+const DECISION_BADGE: Record<string, { label: string; variant: 'green' | 'amber' | 'red' | 'blue' }> = {
   credit: { label: 'Credit', variant: 'green' },
   escalate_to_agent: { label: 'Escalate', variant: 'amber' },
+  request_evidence: { label: 'Request Evidence', variant: 'blue' },
 };
+
+function decisionBadge(decision: string | undefined | null) {
+  if (!decision) return { label: '—', variant: 'amber' as const };
+  return DECISION_BADGE[decision] ?? { label: String(decision), variant: 'amber' as const };
+}
 
 const LABEL_BADGE: Record<DatasetLabel, { label: string; variant: 'green' | 'amber' | 'blue' }> = {
   credit: { label: 'Credit', variant: 'green' },
@@ -265,7 +271,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
             const risk = riskBadge(r.disputeProfile?.risk_level);
             const decision = r.hardGateTriggered
               ? { label: 'Escalate', variant: 'amber' as const }
-              : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
+              : decisionBadge(r.plannerOutput?.decision);
             const labelBadge = dc.label ? LABEL_BADGE[dc.label] : null;
             // Fall through to the existing pipeline-based rendering below
             return <DatasetCaseCard key={dc.id} dc={dc} r={r} risk={risk} decision={decision} labelBadge={labelBadge} onDatasetLabel={onDatasetLabel} onDeleteCase={onDeleteCase} onTagCase={onTagCase} onDatasetLabel2={onDatasetLabel2} agreementMap={agreementMap} tagSuggestions={tagSuggestions} onRetryCase={onRetryCase} retryingCaseIds={retryingCaseIds} onActionNote={onActionNote} actionNote={actionNotes?.[dc.id] ?? null} />;
@@ -307,7 +313,7 @@ export function ResultsTable({ results, onDelete, onReview, verdictOptions = 'ev
         const risk = riskBadge(r.disputeProfile?.risk_level);
         const decision = r.hardGateTriggered
           ? { label: 'Escalate', variant: 'amber' as const }
-          : DECISION_BADGE[r.plannerOutput?.decision ?? 'escalate_to_agent'];
+          : decisionBadge(r.plannerOutput?.decision);
 
         return (
           <div key={r.id} className="rounded-lg border border-gray-200 bg-white">
@@ -818,8 +824,8 @@ function ExpandedDetail({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <h4 className="text-xs font-medium text-muted-foreground mb-1">Decision</h4>
-              <Badge variant={result.plannerOutput.decision === 'credit' ? 'green' : 'amber'}>
-                {result.plannerOutput.decision === 'credit' ? 'Credit' : 'Escalate to Agent'}
+              <Badge variant={decisionBadge(result.plannerOutput.decision).variant}>
+                {decisionBadge(result.plannerOutput.decision).label}
               </Badge>
             </div>
             {result.plannerOutput.args && (
