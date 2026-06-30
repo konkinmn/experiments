@@ -134,6 +134,7 @@ export function projectScenarioSignals(
     // CLI validates them straight in; omitting them would fall to the RiskSignals default (None).
     is_authenticated: raw.is_authenticated ?? null,
     auth_method: raw.auth_method ?? null,
+    card_present: raw.card_present ?? null,
     fetch_failures: [],
   };
 }

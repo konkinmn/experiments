@@ -147,6 +147,8 @@ auth_per_tx AS (
     ), FALSE) AS is_3ds,
     COALESCE('PIN' IN UNNEST(JSON_EXTRACT_STRING_ARRAY(bvt.pos_data_cardholder_authentication_methods)), FALSE) AS has_pin,
     COALESCE('CARDHOLDER_DEVICE' IN UNNEST(JSON_EXTRACT_STRING_ARRAY(bvt.pos_data_cardholder_authentication_entries)), FALSE) AS has_device,
+    COALESCE(bvt.pos_data_card_presence_indicator = 'PRESENT', FALSE) AS cp_present,
+    COALESCE(bvt.pos_data_card_presence_indicator = 'NOT_PRESENT', FALSE) AS cp_not_present,
     -- "unknown": no card_transaction_info — approximated as all five auth/pos columns NULL
     (
       bvt.payment_token_lifecycle_wallet_type IS NULL
@@ -179,7 +181,14 @@ auth_signals AS (
       WHEN LOGICAL_OR(has_pin) THEN 'PIN'
       WHEN LOGICAL_OR(has_device) THEN 'DEVICE'
       ELSE NULL
-    END AS auth_method
+    END AS auth_method,
+    -- Card-presence (mirror _card_presence + _scan): True if any PRESENT; False only if some
+    -- NOT_PRESENT and NO unknowns (UNKNOWN/NULL indicator); NULL otherwise.
+    CASE
+      WHEN LOGICAL_OR(cp_present) THEN TRUE
+      WHEN LOGICAL_OR(cp_not_present) AND NOT LOGICAL_OR(NOT cp_present AND NOT cp_not_present) THEN FALSE
+      ELSE NULL
+    END AS card_present
   FROM auth_per_tx
 )
 SELECT
@@ -198,7 +207,8 @@ SELECT
   COALESCE(dh.railsr_disputes_last_6_months, 0) AS railsr_disputes_last_6_months,
   COALESCE(dh.railsr_disputes_last_30_days, 0) AS railsr_disputes_last_30_days,
   aus.is_authenticated,
-  aus.auth_method
+  aus.auth_method,
+  aus.card_present
 FROM case_data cd
 LEFT JOIN account_data ad ON TRUE
 LEFT JOIN cifas_data cf ON TRUE

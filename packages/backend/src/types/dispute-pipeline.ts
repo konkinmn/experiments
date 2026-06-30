@@ -54,6 +54,7 @@ export interface CaseSignalsRaw {
   railsr_disputes_last_30_days: number;
   is_authenticated: boolean | null;
   auth_method: string | null;
+  card_present: boolean | null;
 }
 
 export interface AnnaCaseScoringBreakdownItem {
