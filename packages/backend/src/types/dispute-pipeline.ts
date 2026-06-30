@@ -52,6 +52,8 @@ export interface CaseSignalsRaw {
   prior_payments_to_merchant: number;
   railsr_disputes_last_6_months: number;
   railsr_disputes_last_30_days: number;
+  is_authenticated: boolean | null;
+  auth_method: string | null;
 }
 
 export interface AnnaCaseScoringBreakdownItem {

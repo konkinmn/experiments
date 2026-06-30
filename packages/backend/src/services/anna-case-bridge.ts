@@ -129,6 +129,11 @@ export function projectScenarioSignals(
       raw.max_transaction_amount != null ? String(raw.max_transaction_amount) : null,
     disputed_currency: 'GBP',
     crime_reference_present: crimeReferencePresent,
+    // Customer-authentication signal (derived in CASE_SIGNALS_QUERY from
+    // export.balance_virtual_transaction). Field names match anna-case RiskSignals so the
+    // CLI validates them straight in; omitting them would fall to the RiskSignals default (None).
+    is_authenticated: raw.is_authenticated ?? null,
+    auth_method: raw.auth_method ?? null,
     fetch_failures: [],
   };
 }
