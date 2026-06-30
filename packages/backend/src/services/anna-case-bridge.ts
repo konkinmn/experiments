@@ -10,6 +10,7 @@ import type {
   CaseSignalsRaw,
   DialogueMessage,
   DisputeProfile,
+  FileParseResult,
   HardGateResult,
   PlannerOutput,
 } from '../types/dispute-pipeline.js';
@@ -135,7 +136,7 @@ export function projectScenarioSignals(
 function projectEnrichment(
   caseActions: CaseAction[] | null,
   dialogueMessages: DialogueMessage[] | null,
-  parsedDocuments: string[] | null,
+  parsedDocuments: FileParseResult[] | null,
 ): Record<string, unknown> {
   const actions = (caseActions ?? []).map((a) => ({
     action_type: a.action_type,
@@ -149,9 +150,14 @@ function projectEnrichment(
   return {
     case_actions: actions,
     customer_dialogue_messages: messages,
-    // anna-case EnrichmentData.parsed_documents expects DocumentLabel objects ({ description, ... }),
-    // not raw strings. file_parse_results are the parsed-document descriptions, so wrap each as one.
-    parsed_documents: (parsedDocuments ?? []).map((d) => ({ description: d })),
+    // anna-case EnrichmentData.parsed_documents expects DocumentLabel objects
+    // ({ description, evidence_item, ... }). Passing evidence_item is what lets
+    // anna-case's build_evidence_check see which Required items are already attached
+    // instead of marking every item MISSING and reflexively requesting evidence.
+    parsed_documents: (parsedDocuments ?? []).map((d) => ({
+      description: d.description,
+      evidence_item: d.evidence_item,
+    })),
     case_actions_count: actions.length,
     customer_messages_count: messages.length,
     files_parsed: parsedDocuments?.length ?? 0,

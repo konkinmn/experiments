@@ -13,6 +13,10 @@ export interface ConfusionMatrix {
   false_escalate: number;
   unlabeled: number;
   undecided: number;
+  // Overlay count (not part of the credit/escalate/unlabeled/undecided partition):
+  // how many runs emitted request_evidence. These are scored as escalate above, but
+  // surfaced separately so we can see how many still fire.
+  request_evidence: number;
 }
 
 export interface DisagreementBreakdown {
@@ -54,7 +58,7 @@ function computeSegmentMetrics(rows: AnalyticsRow[]): SegmentMetrics {
 
   for (const r of rows) {
     if (!r.label || r.label === 'undecided') continue;
-    const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
+    const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent' || r.pipeline_decision === 'request_evidence';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
 
     if (r.pipeline_decision == null && r.hard_gate_triggered == null) continue; // no pipeline result
@@ -89,7 +93,7 @@ function computeDisagreementBreakdown(rows: AnalyticsRow[]): DisagreementBreakdo
 
   for (const r of rows) {
     if (!r.label || r.label === 'undecided') continue;
-    const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
+    const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent' || r.pipeline_decision === 'request_evidence';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
     if (r.pipeline_decision == null && r.hard_gate_triggered == null) continue;
 
@@ -232,7 +236,11 @@ export interface RunComparisonResult {
 
 function resolveDecision(decision: string | null, hardGate: string | null): 'credit' | 'escalate' {
   if (hardGate != null) return 'escalate';
-  return decision === 'credit' ? 'credit' : 'escalate';
+  if (decision === 'credit') return 'credit';
+  // request_evidence is an intermediate action: an unanswered evidence request downgrades
+  // to escalate in prod, so score it (and any non-credit decision) as its terminal escalate.
+  if (decision === 'request_evidence') return 'escalate';
+  return 'escalate';
 }
 
 function isCorrect(label: string | null, pipelineDecision: 'credit' | 'escalate'): boolean | null {
