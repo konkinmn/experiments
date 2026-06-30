@@ -1396,7 +1396,7 @@ export async function getDatasetAnalytics(
   _datasetId: number,
   runId?: number,
 ): Promise<{
-  confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; undecided: number };
+  confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; undecided: number; request_evidence: number };
   rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null }>;
 }> {
   await ensureMigrations();
@@ -1405,7 +1405,7 @@ export async function getDatasetAnalytics(
   if (!runId) {
     // No baseline analytics — require a run
     return {
-      confusion_matrix: { true_credit: 0, false_credit: 0, true_escalate: 0, false_escalate: 0, unlabeled: 0, undecided: 0 },
+      confusion_matrix: { true_credit: 0, false_credit: 0, true_escalate: 0, false_escalate: 0, unlabeled: 0, undecided: 0, request_evidence: 0 },
       rows: [],
     };
   }
@@ -1448,12 +1448,20 @@ function computeAnalyticsFromRows(
   rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null }>
 ) {
   let true_credit = 0, false_credit = 0, true_escalate = 0, false_escalate = 0, unlabeled = 0, undecided = 0;
+  let request_evidence = 0;
 
   for (const r of rows) {
+    // Count every request_evidence emission (independent of label) so we can see how many
+    // still fire. It is an intermediate action that downgrades to escalate in prod when the
+    // customer never answers, so it is also scored as escalate in the confusion matrix below.
+    if (r.pipeline_decision === 'request_evidence') request_evidence++;
+
     if (!r.label) { unlabeled++; continue; }
     if (r.label === 'undecided') { undecided++; continue; }
 
-    const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
+    const pipelineEscalated = r.hard_gate_triggered != null
+      || r.pipeline_decision === 'escalate_to_agent'
+      || r.pipeline_decision === 'request_evidence';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
 
     if (r.label === 'credit' && pipelineCredited) true_credit++;
@@ -1464,7 +1472,7 @@ function computeAnalyticsFromRows(
   }
 
   return {
-    confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, undecided },
+    confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, undecided, request_evidence },
     rows,
   };
 }

@@ -39,7 +39,7 @@ import {
 } from '../services/db.js';
 import { formatPipelineRun } from '../types/dispute-pipeline.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
-import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig, CaseContext, CaseSignalsRaw, CaseAction, DialogueMessage } from '../types/dispute-pipeline.js';
+import type { PipelineRunRow, DatasetCaseRow, DatasetRow, RunConfig, CaseContext, CaseSignalsRaw, CaseAction, DialogueMessage, FileParseResult } from '../types/dispute-pipeline.js';
 import { loadAnnaCasePrompt } from '../services/anna-case-bridge.js';
 import { computeFullAnalytics, computeRunComparison } from '../services/dataset-analytics.js';
 
@@ -541,7 +541,7 @@ export async function datasetRoutes(app: FastifyInstance) {
             case_details: dc.case_details ?? null,
             case_actions: (dc.case_actions as CaseAction[] | null) ?? null,
             dialogue_messages: (dc.dialogue_messages as DialogueMessage[] | null) ?? null,
-            file_parse_results: (dc.file_parse_results as string[] | null) ?? null,
+            file_parse_results: (dc.file_parse_results as FileParseResult[] | null) ?? null,
             enrichment_metadata: (dc.enrichment_metadata as Record<string, unknown> | null) ?? null,
           });
         }
@@ -702,7 +702,7 @@ export async function datasetRoutes(app: FastifyInstance) {
           case_details: dc.case_details ?? null,
           case_actions: (dc.case_actions as CaseAction[] | null) ?? null,
           dialogue_messages: (dc.dialogue_messages as DialogueMessage[] | null) ?? null,
-          file_parse_results: (dc.file_parse_results as string[] | null) ?? null,
+          file_parse_results: (dc.file_parse_results as FileParseResult[] | null) ?? null,
           enrichment_metadata: (dc.enrichment_metadata as Record<string, unknown> | null) ?? null,
         };
         break;
@@ -744,7 +744,7 @@ export async function datasetRoutes(app: FastifyInstance) {
           case_details: dc.case_details ?? null,
           case_actions: (dc.case_actions as CaseAction[] | null) ?? null,
           dialogue_messages: (dc.dialogue_messages as DialogueMessage[] | null) ?? null,
-          file_parse_results: (dc.file_parse_results as string[] | null) ?? null,
+          file_parse_results: (dc.file_parse_results as FileParseResult[] | null) ?? null,
           enrichment_metadata: (dc.enrichment_metadata as Record<string, unknown> | null) ?? null,
         });
       }
