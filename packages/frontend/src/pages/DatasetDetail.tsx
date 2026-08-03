@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Download, Trash2, Loader2, Plus, RefreshCw, Pencil, FilePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Select } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { ResultsTable, NewRunModal, AnalyticsTab, CaseFilterBar, CompareTab } from '@/components/dataset-builder';
@@ -362,25 +363,17 @@ export function DatasetDetail() {
         >
           Compare
         </button>
-        {runs?.map((run) => (
-          <button
-            key={run.id}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
-              activeTab === `run-${run.id}`
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-            onClick={() => setActiveTab(`run-${run.id}`)}
-            onDoubleClick={(e) => { e.preventDefault(); setEditingRunId(run.id); setEditingRunName(run.name); }}
-          >
-            {editingRunId === run.id ? (
+        {runs && runs.length > 0 && (
+          <div className="flex items-center gap-1 ml-2">
+            {editingRunId != null ? (
               <input
-                className="bg-white border border-blue-400 rounded px-1.5 py-0.5 text-sm font-medium w-32 focus:outline-none"
+                className="bg-white border border-blue-400 rounded px-2 py-1 text-sm font-medium w-44 focus:outline-none"
                 value={editingRunName}
                 onChange={(e) => setEditingRunName(e.target.value)}
                 onBlur={() => {
-                  if (editingRunName.trim() && editingRunName.trim() !== run.name) {
-                    renameRun.mutate({ runId: run.id, name: editingRunName.trim() });
+                  const run = runs.find((r) => r.id === editingRunId);
+                  if (run && editingRunName.trim() && editingRunName.trim() !== run.name) {
+                    renameRun.mutate({ runId: editingRunId, name: editingRunName.trim() });
                   }
                   setEditingRunId(null);
                 }}
@@ -388,18 +381,46 @@ export function DatasetDetail() {
                   if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); }
                   if (e.key === 'Escape') { setEditingRunId(null); }
                 }}
-                onClick={(e) => e.stopPropagation()}
                 autoFocus
               />
-            ) : run.name}
-            {(run.status === 'pending' || run.status === 'running') && (
-              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Select
+                className={`h-9 w-48 ${activeRunId != null ? 'border-blue-600 text-blue-600 font-medium' : ''}`}
+                value={activeRunId != null ? `run-${activeRunId}` : ''}
+                onChange={(e) => { if (e.target.value) setActiveTab(e.target.value as ActiveTab); }}
+              >
+                <option value="" disabled>
+                  {`Runs (${runs.length})…`}
+                </option>
+                {runs.map((run) => (
+                  <option key={run.id} value={`run-${run.id}`}>
+                    {run.name}
+                    {run.status === 'pending' || run.status === 'running'
+                      ? ' (running)'
+                      : run.status === 'failed'
+                        ? ' (failed)'
+                        : ''}
+                  </option>
+                ))}
+              </Select>
             )}
-            {run.status === 'failed' && (
+            {activeRun && editingRunId == null && (
+              <button
+                className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors"
+                title="Rename run"
+                onClick={() => { setEditingRunId(activeRun.id); setEditingRunName(activeRun.name); }}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {activeRun && (activeRun.status === 'pending' || activeRun.status === 'running') && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+            )}
+            {activeRun && activeRun.status === 'failed' && (
               <span className="h-2 w-2 rounded-full bg-red-500" />
             )}
-          </button>
-        ))}
+          </div>
+        )}
         <button
           className="px-3 py-2 text-sm font-medium text-gray-400 hover:text-blue-600 transition-colors flex items-center gap-1 border-b-2 border-transparent"
           onClick={() => setShowNewRunModal(true)}
