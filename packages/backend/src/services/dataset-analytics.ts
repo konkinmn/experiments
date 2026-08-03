@@ -13,6 +13,13 @@ export interface ConfusionMatrix {
   false_escalate: number;
   unlabeled: number;
   undecided: number;
+  // request_evidence is a first-class outcome, NOT folded into escalate. `request_evidence` is
+  // the total count emitted (any label); `true_request_evidence` counts the ones where it was
+  // the expected action (manual tag 'expect_request_evidence') and is therefore scored correct.
+  // Off-expectation request_evidence is neutral — excluded from the credit/escalate agreement,
+  // never counted as a miss.
+  request_evidence: number;
+  true_request_evidence: number;
 }
 
 export interface DisagreementBreakdown {
@@ -46,18 +53,34 @@ export interface AnalyticsRow {
   label_confidence: string | null;
   disagreement_reason: string | null;
   label_2: string | null;
+  // True when the case is flagged (manual tag 'expect_request_evidence') as one where asking
+  // the customer for evidence is the correct outcome.
+  expected_request_evidence?: boolean;
 }
 
 function computeSegmentMetrics(rows: AnalyticsRow[]): SegmentMetrics {
-  let trueCredit = 0, falseCredit = 0, trueEscalate = 0, _falseEscalate = 0;
+  let trueCredit = 0, falseCredit = 0, trueEscalate = 0, _falseEscalate = 0, trueRequestEvidence = 0;
   let sampleSize = 0;
 
   for (const r of rows) {
     if (!r.label || r.label === 'undecided') continue;
+    if (r.pipeline_decision == null && r.hard_gate_triggered == null) continue; // no pipeline result
+
+    // request_evidence is a valid intermediate action, not a credit/escalate miss. When asking
+    // for evidence is the expected outcome (manual tag) score it correct; otherwise treat it as
+    // neutral (exclude from the sample) so good process doesn't drag agreement down. A fired hard
+    // gate still takes precedence (handled in the escalate branch below).
+    if (r.hard_gate_triggered == null && r.pipeline_decision === 'request_evidence') {
+      // Expected (tag) → correct, attributed to request_evidence. On escalate-labeled cases it is
+      // a valid path to escalate → correct. On credit-labeled cases it is good process toward an
+      // eventual credit → neutral (excluded), never a miss.
+      if (r.expected_request_evidence) { sampleSize++; trueRequestEvidence++; }
+      else if (r.label === 'escalate') { sampleSize++; trueEscalate++; }
+      continue;
+    }
+
     const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
-
-    if (r.pipeline_decision == null && r.hard_gate_triggered == null) continue; // no pipeline result
 
     sampleSize++;
     if (r.label === 'credit' && pipelineCredited) trueCredit++;
@@ -68,7 +91,7 @@ function computeSegmentMetrics(rows: AnalyticsRow[]): SegmentMetrics {
 
   const totalPredictedCredit = trueCredit + falseCredit;
   const totalLabeledEscalate = trueEscalate + falseCredit;
-  const totalCorrect = trueCredit + trueEscalate;
+  const totalCorrect = trueCredit + trueEscalate + trueRequestEvidence;
 
   return {
     sample_size: sampleSize,
@@ -89,9 +112,11 @@ function computeDisagreementBreakdown(rows: AnalyticsRow[]): DisagreementBreakdo
 
   for (const r of rows) {
     if (!r.label || r.label === 'undecided') continue;
+    if (r.pipeline_decision == null && r.hard_gate_triggered == null) continue;
+    // request_evidence is neutral (not a disagreement) — see computeSegmentMetrics.
+    if (r.hard_gate_triggered == null && r.pipeline_decision === 'request_evidence') continue;
     const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
-    if (r.pipeline_decision == null && r.hard_gate_triggered == null) continue;
 
     const isDisagreement =
       (r.label === 'credit' && !pipelineCredited) ||
@@ -232,7 +257,11 @@ export interface RunComparisonResult {
 
 function resolveDecision(decision: string | null, hardGate: string | null): 'credit' | 'escalate' {
   if (hardGate != null) return 'escalate';
-  return decision === 'credit' ? 'credit' : 'escalate';
+  if (decision === 'credit') return 'credit';
+  // request_evidence is an intermediate action: an unanswered evidence request downgrades
+  // to escalate in prod, so score it (and any non-credit decision) as its terminal escalate.
+  if (decision === 'request_evidence') return 'escalate';
+  return 'escalate';
 }
 
 function isCorrect(label: string | null, pipelineDecision: 'credit' | 'escalate'): boolean | null {

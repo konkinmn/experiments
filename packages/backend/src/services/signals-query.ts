@@ -129,6 +129,67 @@ dispute_history AS (
     AND t.task_type = 'DISPUTE'
     AND t.created_at >= TIMESTAMP(DATETIME_SUB(DATETIME((SELECT case_created_at FROM case_data)), INTERVAL 6 MONTH))
     AND t.created_at < (SELECT case_created_at FROM case_data)
+),
+-- Customer-authentication signal: join the disputed TRANSACTION artifacts to the synced
+-- balance table and mirror anna-case signal_fetcher._is_authenticated per transaction.
+auth_per_tx AS (
+  SELECT
+    COALESCE(bvt.payment_token_lifecycle_wallet_type = 'APPLE_PAY', FALSE) AS is_apple_pay,
+    COALESCE(bvt.payment_token_lifecycle_wallet_type = 'GOOGLE_PAY', FALSE) AS is_google_pay,
+    COALESCE(bvt.pos_data_secure_3d_authentication_method IN (
+      'PASSWORD','SECRET_KEY_OR_SECURE_3D_2_0_CHALLENGE_FLOW_OTP_SMS',
+      'PKI_OR_SECURE_3D_2_0_CHALLENGE_FLOW_OTP_KEY_FOB_OR_CARD_READER',
+      'SECURE_3D_2_0_CHALLENGE_FLOW_OTP_APP','SECURE_3D_2_0_CHALLENGE_FLOW_OTP_OTHER',
+      'SECURE_3D_2_0_CHALLENGE_FLOW_KBA','SECURE_3D_2_0_CHALLENGE_FLOW_OOB_BIOMETRIC',
+      'SECURE_3D_2_0_CHALLENGE_FLOW_OOB_APP_LOGIN','SECURE_3D_2_0_CHALLENGE_FLOW_OOB_OTHER',
+      'SECURE_3D_2_0_CHALLENGE_FLOW_OTHER','SECURE_3D_2_0_PUSH_CONFIRMATION',
+      'SECURE_3D_2_0_FRICTIONLESS_FLOW','SECURE_3D_2_0_FRICTIONLESS_FLOW_RBA_REVIEW'
+    ), FALSE) AS is_3ds,
+    COALESCE('PIN' IN UNNEST(JSON_EXTRACT_STRING_ARRAY(bvt.pos_data_cardholder_authentication_methods)), FALSE) AS has_pin,
+    COALESCE('CARDHOLDER_DEVICE' IN UNNEST(JSON_EXTRACT_STRING_ARRAY(bvt.pos_data_cardholder_authentication_entries)), FALSE) AS has_device,
+    COALESCE(bvt.pos_data_card_presence_indicator = 'PRESENT', FALSE) AS cp_present,
+    COALESCE(bvt.pos_data_card_presence_indicator = 'NOT_PRESENT', FALSE) AS cp_not_present,
+    -- "unknown": no card_transaction_info — approximated as all five auth/pos columns NULL
+    (
+      bvt.payment_token_lifecycle_wallet_type IS NULL
+      AND bvt.pos_data_secure_3d_authentication_method IS NULL
+      AND bvt.pos_data_cardholder_authentication_methods IS NULL
+      AND bvt.pos_data_cardholder_authentication_entries IS NULL
+      AND bvt.pos_data_card_presence_indicator IS NULL
+    ) AS is_unknown
+  FROM \`anna-money.export.case_case_artifact\` a
+  JOIN \`anna-money.export.balance_virtual_transaction\` bvt ON bvt.id = a.artifact_id
+  WHERE a.case_id = @case_id
+    AND a.artifact_type = 'TRANSACTION'
+),
+auth_signals AS (
+  -- Case-level any-true aggregation (mirror _scan_disputed_transactions): True if ANY disputed
+  -- tx is authenticated; False only if at least one is definitively not-authenticated and there
+  -- are NO unknowns; NULL otherwise (partial-unknown must stay NULL, not False).
+  SELECT
+    CASE
+      WHEN LOGICAL_OR(is_apple_pay OR is_google_pay OR is_3ds OR has_pin OR has_device) THEN TRUE
+      WHEN LOGICAL_OR(NOT (is_apple_pay OR is_google_pay OR is_3ds OR has_pin OR has_device) AND NOT is_unknown)
+           AND NOT LOGICAL_OR(is_unknown) THEN FALSE
+      ELSE NULL
+    END AS is_authenticated,
+    -- Label by global priority APPLE_PAY > GOOGLE_PAY > 3DS > PIN > DEVICE; NULL if none.
+    CASE
+      WHEN LOGICAL_OR(is_apple_pay) THEN 'APPLE_PAY'
+      WHEN LOGICAL_OR(is_google_pay) THEN 'GOOGLE_PAY'
+      WHEN LOGICAL_OR(is_3ds) THEN '3DS'
+      WHEN LOGICAL_OR(has_pin) THEN 'PIN'
+      WHEN LOGICAL_OR(has_device) THEN 'DEVICE'
+      ELSE NULL
+    END AS auth_method,
+    -- Card-presence (mirror _card_presence + _scan): True if any PRESENT; False only if some
+    -- NOT_PRESENT and NO unknowns (UNKNOWN/NULL indicator); NULL otherwise.
+    CASE
+      WHEN LOGICAL_OR(cp_present) THEN TRUE
+      WHEN LOGICAL_OR(cp_not_present) AND NOT LOGICAL_OR(NOT cp_present AND NOT cp_not_present) THEN FALSE
+      ELSE NULL
+    END AS card_present
+  FROM auth_per_tx
 )
 SELECT
   cd.*,
@@ -144,7 +205,10 @@ SELECT
   COALESCE(ta.active_months, 0) AS active_months,
   COALESCE(ta.prior_payments_to_merchant, 0) AS prior_payments_to_merchant,
   COALESCE(dh.railsr_disputes_last_6_months, 0) AS railsr_disputes_last_6_months,
-  COALESCE(dh.railsr_disputes_last_30_days, 0) AS railsr_disputes_last_30_days
+  COALESCE(dh.railsr_disputes_last_30_days, 0) AS railsr_disputes_last_30_days,
+  aus.is_authenticated,
+  aus.auth_method,
+  aus.card_present
 FROM case_data cd
 LEFT JOIN account_data ad ON TRUE
 LEFT JOIN cifas_data cf ON TRUE
@@ -155,6 +219,7 @@ LEFT JOIN scam_scammer ss ON TRUE
 LEFT JOIN scam_victim sv ON TRUE
 LEFT JOIN transaction_activity ta ON TRUE
 LEFT JOIN dispute_history dh ON TRUE
+LEFT JOIN auth_signals aus ON TRUE
 `;
 
 export async function fetchCaseSignals(caseId: number): Promise<CaseSignalsRaw> {

@@ -52,6 +52,9 @@ export interface CaseSignalsRaw {
   prior_payments_to_merchant: number;
   railsr_disputes_last_6_months: number;
   railsr_disputes_last_30_days: number;
+  is_authenticated: boolean | null;
+  auth_method: string | null;
+  card_present: boolean | null;
 }
 
 export interface AnnaCaseScoringBreakdownItem {
@@ -92,9 +95,30 @@ export interface PlannerArgs {
   crime_reference: string | null;
 }
 
+// Fixed evidence vocabulary, mirroring anna-case anna_case/dispute_pipeline/models.py
+// EvidenceItem. The bridge must emit exactly these values so anna-case's
+// build_evidence_check sees what evidence is already attached.
+export type EvidenceItem =
+  | 'MERCHANT_CORRESPONDENCE'
+  | 'ORDER_CONFIRMATION'
+  | 'PROOF_OF_NON_DELIVERY'
+  | 'PHOTOS_OF_GOODS'
+  | 'CANCELLATION_CONFIRMATION'
+  | 'ATM_RECEIPT'
+  | 'POLICE_REPORT';
+
+// One parsed file artifact: a text description plus its classification into the
+// evidence vocabulary (null when the document matches no vocabulary item).
+export interface FileParseResult {
+  description: string;
+  evidence_item: EvidenceItem | null;
+}
+
 export interface PlannerOutput {
   thought: string;
-  decision: 'credit' | 'escalate_to_agent';
+  // request_evidence is an intermediate action; in prod it downgrades to escalate
+  // when the customer never answers. anna-case PlannerDecision allows all three.
+  decision: 'credit' | 'escalate_to_agent' | 'request_evidence';
   args: PlannerArgs | null;
   uncertainty_factors: string[];
 }
@@ -117,7 +141,7 @@ export interface PipelineRunRow {
   case_actions: CaseAction[] | null;
   planner_request: Record<string, unknown> | null;
   planner_system_prompt: string | null;
-  file_parse_results: string[] | null;
+  file_parse_results: FileParseResult[] | null;
   dialogue_messages: DialogueMessage[] | null;
   enrichment_metadata: Record<string, unknown> | null;
   reviewer_verdict: string | null;
@@ -143,7 +167,7 @@ export interface PipelineRunInsert {
   case_actions: CaseAction[] | null;
   planner_request: Record<string, unknown> | null;
   planner_system_prompt: string | null;
-  file_parse_results: string[] | null;
+  file_parse_results: FileParseResult[] | null;
   dialogue_messages: DialogueMessage[] | null;
   enrichment_metadata: Record<string, unknown> | null;
 }
@@ -296,7 +320,7 @@ export interface CaseContext {
   case_details: unknown | null;
   case_actions: CaseAction[] | null;
   dialogue_messages: DialogueMessage[] | null;
-  file_parse_results: string[] | null;
+  file_parse_results: FileParseResult[] | null;
   enrichment_metadata: Record<string, unknown> | null;
 }
 
@@ -311,7 +335,7 @@ export interface DatasetCaseRow {
   case_details: unknown | null;
   case_actions: CaseAction[] | null;
   dialogue_messages: DialogueMessage[] | null;
-  file_parse_results: string[] | null;
+  file_parse_results: FileParseResult[] | null;
   enrichment_metadata: Record<string, unknown> | null;
   context_error: string | null;
   context_fetched_at: string | null;

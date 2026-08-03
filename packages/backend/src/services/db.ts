@@ -1396,8 +1396,8 @@ export async function getDatasetAnalytics(
   _datasetId: number,
   runId?: number,
 ): Promise<{
-  confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; undecided: number };
-  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null }>;
+  confusion_matrix: { true_credit: number; false_credit: number; true_escalate: number; false_escalate: number; unlabeled: number; undecided: number; request_evidence: number; true_request_evidence: number };
+  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null; expected_request_evidence: boolean }>;
 }> {
   await ensureMigrations();
   const pool = getPool();
@@ -1405,7 +1405,7 @@ export async function getDatasetAnalytics(
   if (!runId) {
     // No baseline analytics — require a run
     return {
-      confusion_matrix: { true_credit: 0, false_credit: 0, true_escalate: 0, false_escalate: 0, unlabeled: 0, undecided: 0 },
+      confusion_matrix: { true_credit: 0, false_credit: 0, true_escalate: 0, false_escalate: 0, unlabeled: 0, undecided: 0, request_evidence: 0, true_request_evidence: 0 },
       rows: [],
     };
   }
@@ -1419,6 +1419,7 @@ export async function getDatasetAnalytics(
     label_confidence: string | null;
     disagreement_reason: string | null;
     label_2: string | null;
+    expected_request_evidence: boolean;
   }>(
     `SELECT
        jsonb_build_object(
@@ -1433,7 +1434,8 @@ export async function getDatasetAnalytics(
          'dispute_type', COALESCE(pr.planner_output->'args'->>'reason', 'unknown')
        ) AS auto_tags,
        dc.label, pr.planner_output->>'decision' AS pipeline_decision, pr.hard_gate_triggered,
-       rc.label_confidence, rc.disagreement_reason, dc.label_2
+       rc.label_confidence, rc.disagreement_reason, dc.label_2,
+       ('expect_request_evidence' = ANY(dc.manual_tags)) AS expected_request_evidence
      FROM dataset_run_cases rc
      JOIN dataset_cases dc ON dc.id = rc.dataset_case_id
      LEFT JOIN dispute_pipeline_runs pr ON pr.id = rc.pipeline_run_id
@@ -1445,13 +1447,28 @@ export async function getDatasetAnalytics(
 }
 
 function computeAnalyticsFromRows(
-  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null }>
+  rows: Array<{ auto_tags: Record<string, string | boolean>; label: string | null; pipeline_decision: string | null; hard_gate_triggered: string | null; label_confidence: string | null; disagreement_reason: string | null; label_2: string | null; expected_request_evidence: boolean }>
 ) {
   let true_credit = 0, false_credit = 0, true_escalate = 0, false_escalate = 0, unlabeled = 0, undecided = 0;
+  let request_evidence = 0, true_request_evidence = 0;
 
   for (const r of rows) {
+    // Total request_evidence emissions (independent of label) for visibility.
+    if (r.pipeline_decision === 'request_evidence') request_evidence++;
+
     if (!r.label) { unlabeled++; continue; }
     if (r.label === 'undecided') { undecided++; continue; }
+
+    // request_evidence is a first-class outcome: scored correct when asking for evidence is the
+    // expected action (manual tag 'expect_request_evidence'), and otherwise treated as neutral —
+    // excluded from the credit/escalate buckets so good process is never counted as a miss.
+    // A fired hard gate still takes precedence and is scored as escalate below.
+    if (r.hard_gate_triggered == null && r.pipeline_decision === 'request_evidence') {
+      if (r.expected_request_evidence) true_request_evidence++;       // expected → correct
+      else if (r.label === 'escalate') true_escalate++;               // valid path to escalate → correct
+      // else credit (not expected): neutral — excluded, never a miss
+      continue;
+    }
 
     const pipelineEscalated = r.hard_gate_triggered != null || r.pipeline_decision === 'escalate_to_agent';
     const pipelineCredited = !pipelineEscalated && r.pipeline_decision === 'credit';
@@ -1464,7 +1481,7 @@ function computeAnalyticsFromRows(
   }
 
   return {
-    confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, undecided },
+    confusion_matrix: { true_credit, false_credit, true_escalate, false_escalate, unlabeled, undecided, request_evidence, true_request_evidence },
     rows,
   };
 }
