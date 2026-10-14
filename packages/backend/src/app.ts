@@ -5,6 +5,7 @@ import { timelineAnalyzerRoutes } from './routes/timeline-analyzer.js';
 import { datasetRoutes } from './routes/dataset.js';
 import { caseBrowserRoutes } from './routes/case-browser.js';
 import { queueAnalyserRoutes } from './routes/queue-analyser.js';
+import { problemClassifierRoutes } from './routes/problem-classifier.js';
 import { closePool } from './services/db.js';
 
 export function buildApp() {
@@ -32,6 +33,7 @@ export function buildApp() {
   app.register(datasetRoutes, { prefix: '/api/datasets' });
   app.register(caseBrowserRoutes, { prefix: '/api/case-browser' });
   app.register(queueAnalyserRoutes, { prefix: '/api/queue-analyser' });
+  app.register(problemClassifierRoutes, { prefix: '/api/problem-classifier' });
 
   app.addHook('onClose', async () => {
     await closePool();

@@ -23,9 +23,22 @@ import type {
   QueueRunsResponse,
   QueueTask,
   QueueTaskFilters,
+  SnapshotSummary,
+  CreateSnapshotRequest,
+  PassRequest,
+  Plan,
+  Job,
+  RunSummary,
+  ThreadRow,
+  RunThreadsResponse,
+  ThreadDetail,
+  Report,
+  ComparePass3Result,
+  PcDefaults,
 } from '@/types';
 
 const API_BASE = import.meta.env.API_URL || '';
+const PC_BASE = '/api/problem-classifier';
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const headers: HeadersInit = {
@@ -288,4 +301,86 @@ export const api = {
       `/api/queue-analyser/runs/${runId}/tasks${qs ? `?${qs}` : ''}`,
     );
   },
+
+  // Problem Classifier API
+  /** What to select on load. 404s on a backend that predates the endpoint. */
+  getPcDefaults: () => fetchApi<{ data: PcDefaults }>(`${PC_BASE}/defaults`),
+
+  getPcSnapshots: () =>
+    fetchApi<{ data: SnapshotSummary[] }>(`${PC_BASE}/snapshots`),
+
+  createPcSnapshot: (body: CreateSnapshotRequest) =>
+    fetchApi<{ data: SnapshotSummary }>(`${PC_BASE}/snapshots`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getPcSnapshot: (name: string) =>
+    fetchApi<{ data: SnapshotSummary }>(`${PC_BASE}/snapshots/${encodeURIComponent(name)}`),
+
+  getPcSnapshotThreads: (name: string) =>
+    fetchApi<{ data: ThreadRow[] }>(`${PC_BASE}/snapshots/${encodeURIComponent(name)}/threads`),
+
+  buildPcBundles: (name: string, force?: boolean) =>
+    fetchApi<{ data: { jobId: string } }>(`${PC_BASE}/snapshots/${encodeURIComponent(name)}/bundles`, {
+      method: 'POST',
+      body: JSON.stringify({ force: !!force }),
+    }),
+
+  getPcRuns: (name: string) =>
+    fetchApi<{ data: RunSummary[] }>(`${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs`),
+
+  createPcRun: (name: string, run: string) =>
+    fetchApi<{ data: RunSummary }>(`${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs`, {
+      method: 'POST',
+      body: JSON.stringify({ run }),
+    }),
+
+  planPcPass: (name: string, run: string, request: PassRequest) =>
+    fetchApi<{ data: Plan }>(
+      `${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs/${encodeURIComponent(run)}/plan`,
+      { method: 'POST', body: JSON.stringify(request) },
+    ),
+
+  startPcPass: (name: string, run: string, request: PassRequest) =>
+    fetchApi<{ data: { jobId: string; plan: Plan } }>(
+      `${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs/${encodeURIComponent(run)}/start`,
+      { method: 'POST', body: JSON.stringify(request) },
+    ),
+
+  getPcJobs: () => fetchApi<{ data: Job[] }>(`${PC_BASE}/jobs`),
+
+  getPcJob: (jobId: string) =>
+    fetchApi<{ data: Job }>(`${PC_BASE}/jobs/${encodeURIComponent(jobId)}`),
+
+  cancelPcJob: (jobId: string) =>
+    fetchApi<{ data: unknown }>(`${PC_BASE}/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: 'POST',
+    }),
+
+  getPcRunThreads: (name: string, run: string, label?: string) => {
+    const qs = label ? `?label=${encodeURIComponent(label)}` : '';
+    return fetchApi<{ data: RunThreadsResponse }>(
+      `${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs/${encodeURIComponent(run)}/threads${qs}`,
+    );
+  },
+
+  getPcThreadDetail: (name: string, run: string, threadId: string, label?: string) => {
+    const qs = label ? `?label=${encodeURIComponent(label)}` : '';
+    return fetchApi<{ data: ThreadDetail }>(
+      `${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs/${encodeURIComponent(run)}/threads/${encodeURIComponent(threadId)}${qs}`,
+    );
+  },
+
+  getPcReport: (name: string, run: string, label?: string) => {
+    const qs = label ? `?label=${encodeURIComponent(label)}` : '';
+    return fetchApi<{ data: Report }>(
+      `${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs/${encodeURIComponent(run)}/report${qs}`,
+    );
+  },
+
+  comparePcPass3: (name: string, run: string, a: string, b: string) =>
+    fetchApi<{ data: ComparePass3Result }>(
+      `${PC_BASE}/snapshots/${encodeURIComponent(name)}/runs/${encodeURIComponent(run)}/compare-pass3?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    ),
 };

@@ -14,5 +14,8 @@ pnpm-debug.log*
 .env.*
 packages/backend/.env
 
+# problem-classifier snapshots (customer aliases + message text — never commit)
+packages/backend/data/
+
 # ralphex progress logs
 progress*.txt

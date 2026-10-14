@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { analyzeWithLLM } from './llm-api.js';
 import { getPromptById } from './prompts.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
+import { parseLlmJson } from '../utils/llm-json.js';
 import {
   PROCESS_CATALOG,
   getProcessType,
@@ -86,34 +87,6 @@ const NewKindSchema = z.object({ kind: z.string(), name: z.string(), the_work: z
 const DefineSchema = z.object({ new_kinds: z.array(NewKindSchema) });
 
 const URGENCY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
-
-// ---- LLM JSON parse (3-tier) ----
-function parseLlmJson(text: string): unknown {
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  if (jsonMatch) return JSON.parse(jsonMatch[1]);
-  try {
-    return JSON.parse(text);
-  } catch {
-    const extracted = extractJsonObject(text);
-    if (extracted !== null) return extracted;
-    throw new Error('No JSON object found in LLM response');
-  }
-}
-function extractJsonObject(text: string): unknown | null {
-  const start = text.indexOf('{');
-  if (start === -1) return null;
-  let depth = 0, inString = false, escape = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (escape) { escape = false; continue; }
-    if (ch === '\\' && inString) { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === '{') depth++;
-    else if (ch === '}') { depth--; if (depth === 0) return JSON.parse(text.substring(start, i + 1)); }
-  }
-  return null;
-}
 
 function fmtMoney(v: number | null): string {
   return v === null ? 'unknown' : `£${v.toFixed(2)}`;

@@ -4,6 +4,10 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        // Only the problem-classifier reading uses `font-serif`.
+        serif: ['"Source Serif 4"', 'Georgia', '"Times New Roman"', 'serif'],
+      },
       colors: {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

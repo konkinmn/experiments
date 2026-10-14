@@ -5,6 +5,7 @@ import { DatasetBuilder } from '@/pages/DatasetBuilder';
 import { DatasetDetail } from '@/pages/DatasetDetail';
 import { CaseBrowser } from '@/pages/CaseBrowser';
 import { QueueAnalyser } from '@/pages/QueueAnalyser';
+import { ProblemClassifier } from '@/pages/ProblemClassifier';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
         <Route path="/dataset/:id" element={<DatasetDetail />} />
         <Route path="/case-browser" element={<CaseBrowser />} />
         <Route path="/queue-analyser" element={<QueueAnalyser />} />
+        <Route path="/problem-classifier" element={<ProblemClassifier />} />
       </Routes>
     </div>
   );

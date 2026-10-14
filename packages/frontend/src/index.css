@@ -56,3 +56,148 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Payment problem classifier — page-scoped presentation layer.
+ * Everything below is namespaced under `.pc-page`, so no other page or the
+ * sidebar can pick it up. The shadcn tokens are re-declared on the page root
+ * rather than globally: the components the drawer reuses (Button, Table,
+ * TabNav) then inherit this page's quieter palette without being edited.
+ * ------------------------------------------------------------------------- */
+.pc-page {
+  --pc-ink: #1b1f24;
+  --pc-dim: #5b6470;
+  --pc-paper: #ffffff;
+  --pc-shade: #f6f7f9;
+  --pc-line: #e3e6ea;
+  --pc-accent: #2563eb;
+
+  /*
+   * Every bar's fill. One grey, deliberately: a bar's length is the only thing it
+   * says, and the scenario is chosen in the switcher above the list, not encoded in
+   * a colour inside it.
+   */
+  --pc-bar-fill: #a9b0ba;
+
+  /* Page-scoped shadcn overrides. */
+  --background: 0 0% 100%;
+  --foreground: 213 15% 12%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 214 12% 40%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 213 15% 12%;
+  --border: 213 17% 90%;
+  --input: 213 17% 90%;
+  --ring: 221 83% 53%;
+  --radius: 0.375rem;
+
+  color: var(--pc-ink);
+}
+
+.pc-page .pc-dim {
+  color: var(--pc-dim);
+}
+
+.pc-page .pc-hairline {
+  border-color: var(--pc-line);
+}
+
+/* Tabular figures for ids and counts, so columns of numbers line up. */
+.pc-page .pc-tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* The reading itself: the one serif on the page. */
+.pc-page .pc-reading {
+  font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  font-size: 17px;
+  line-height: 1.6;
+  max-width: 68ch;
+}
+
+/* Section label in the left margin on wide screens, above the prose below. */
+.pc-page .pc-labelled {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 0.375rem;
+}
+
+@media (min-width: 900px) {
+  .pc-page .pc-labelled {
+    grid-template-columns: 11rem minmax(0, 1fr);
+    column-gap: 2rem;
+    row-gap: 0;
+  }
+}
+
+/* The non-problem group's bar: lightest, hatched, outlined — not work to be done. */
+.pc-page .pc-hatch {
+  background-color: #f6f7f9;
+  background-image: repeating-linear-gradient(
+    45deg,
+    #d7dbe0 0,
+    #d7dbe0 1px,
+    transparent 1px,
+    transparent 6px
+  );
+  box-shadow: inset 0 0 0 1px #d7dbe0;
+}
+
+/* The selected row's bar gains an outline rather than a different fill. */
+.pc-page .pc-bar-picked {
+  outline: 1px solid var(--pc-accent);
+  outline-offset: 1px;
+}
+
+/* One visible focus treatment for every interactive thing on the page. */
+.pc-page .pc-focus:focus-visible {
+  outline: 2px solid var(--pc-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.pc-page .pc-band {
+  transition: background-color 150ms ease;
+}
+
+.pc-drawer {
+  animation: pc-drawer-in 150ms ease-out;
+}
+
+.pc-scrim {
+  animation: pc-scrim-in 150ms ease-out;
+}
+
+@keyframes pc-drawer-in {
+  from {
+    transform: translateX(1.5rem);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pc-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pc-page *,
+  .pc-page *::before,
+  .pc-page *::after,
+  .pc-drawer,
+  .pc-scrim {
+    transition-duration: 1ms !important;
+    animation: none !important;
+  }
+}

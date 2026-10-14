@@ -1,5 +1,13 @@
 import { BigQuery } from '@google-cloud/bigquery';
 
+/**
+ * Named query-parameter types, e.g. `{ dialogue_ids: ['INT64'], win_from: 'DATE' }`.
+ * Needed whenever a parameter's type cannot be inferred from its value (DATE
+ * strings, empty arrays). Mirrors the client's own `QueryParamTypeStruct`,
+ * which the package does not re-export.
+ */
+export type QueryParamTypeMap = Record<string, string | string[]>;
+
 export class BigQueryService {
   private client: BigQuery;
   private projectId: string;
@@ -34,6 +42,32 @@ export class BigQueryService {
         : {}),
     });
     return rows as T[];
+  }
+
+  /**
+   * Same as `query()` but also returns the bytes the job was billed for, so a
+   * caller scanning large unpartitioned tables can report its own cost.
+   */
+  async queryWithStats<T = Record<string, unknown>>(
+    sql: string,
+    params?: Record<string, unknown>,
+    jobOptions?: { maximumBytesBilled?: string; types?: QueryParamTypeMap },
+  ): Promise<{ rows: T[]; totalBytesProcessed: number }> {
+    const [job] = await this.client.createQueryJob({
+      query: sql,
+      params,
+      location: this.location,
+      ...(jobOptions?.types ? { types: jobOptions.types } : {}),
+      ...(jobOptions?.maximumBytesBilled
+        ? { maximumBytesBilled: jobOptions.maximumBytesBilled }
+        : {}),
+    });
+    const [rows] = await job.getQueryResults();
+    const [metadata] = await job.getMetadata();
+    const stats = (metadata as { statistics?: { query?: Record<string, string> } })?.statistics
+      ?.query;
+    const bytes = stats?.totalBytesProcessed ?? stats?.totalBytesBilled ?? '0';
+    return { rows: rows as T[], totalBytesProcessed: Number(bytes) };
   }
 
   async queryTable<T = Record<string, unknown>>(
